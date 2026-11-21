@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 DEFAULT_SNI = "cdn.example.com"
 DEFAULT_PORT = 443
 PORTS = list(range(5390, 5406))
@@ -497,6 +497,192 @@ def start_run(cfg) -> dict:
 
 
 # --------------------------------------------------------------------------
+# 网络环境检测：开着 VPN / 代理时，测出来的是「到代理」的距离，不是真实链路
+# --------------------------------------------------------------------------
+
+# 只认用户态代理客户端的进程名片段。带 service / helper 的常驻服务（例如
+# clash-verge-service.exe）在代理没开时也在跑，必须排除，否则天天误报。
+_PROXY_PROC_HINTS = ("clash", "mihomo", "v2ray", "xray", "sing-box", "singbox",
+                     "shadowsocks", "sslocal", "ss-local", "trojan", "nekoray",
+                     "nekobox", "hiddify", "netch", "proxifier", "qv2ray", "v2raya")
+_PROXY_PROC_SKIP = ("service", "-svc", "helper", "updater", "installer", "uninst")
+
+# 网卡名 / 描述关键词，只在网卡处于「已连接」时才算数
+_PROXY_IF_HINTS = ("tap-windows", "wintun", "wireguard", "openvpn", "tun",
+                   "clash", "mihomo", "sing-box", "v2ray", "tailscale",
+                   "zerotier", "vpn", "pptp", "l2tp", "sstp", "easyconnect")
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ProcessID", ctypes.c_ulong),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", ctypes.c_ulong),
+        ("cntThreads", ctypes.c_ulong),
+        ("th32ParentProcessID", ctypes.c_ulong),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+class _IP_ADAPTER_ADDRESSES(ctypes.Structure):
+    pass
+
+
+# 只声明到 OperStatus，后面的字段用不到；前面的偏移必须和系统结构一致
+_IP_ADAPTER_ADDRESSES._fields_ = [
+    ("Length", ctypes.c_ulong),
+    ("IfIndex", ctypes.c_ulong),
+    ("Next", ctypes.POINTER(_IP_ADAPTER_ADDRESSES)),
+    ("AdapterName", ctypes.c_char_p),
+    ("FirstUnicastAddress", ctypes.c_void_p),
+    ("FirstAnycastAddress", ctypes.c_void_p),
+    ("FirstMulticastAddress", ctypes.c_void_p),
+    ("FirstDnsServerAddress", ctypes.c_void_p),
+    ("DnsSuffix", ctypes.c_wchar_p),
+    ("Description", ctypes.c_wchar_p),
+    ("FriendlyName", ctypes.c_wchar_p),
+    ("PhysicalAddress", ctypes.c_ubyte * 8),
+    ("PhysicalAddressLength", ctypes.c_ulong),
+    ("Flags", ctypes.c_ulong),
+    ("Mtu", ctypes.c_ulong),
+    ("IfType", ctypes.c_ulong),
+    ("OperStatus", ctypes.c_uint),
+]
+
+
+def _ie_proxy_state() -> dict:
+    """当前用户的系统代理设置（Edge / Chrome 默认都走这里）。"""
+    out = {"enable": False, "server": "", "pac": ""}
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as k:
+            try:
+                out["enable"] = bool(winreg.QueryValueEx(k, "ProxyEnable")[0])
+            except OSError:
+                pass
+            try:
+                out["server"] = str(winreg.QueryValueEx(k, "ProxyServer")[0] or "")
+            except OSError:
+                pass
+            try:
+                out["pac"] = str(winreg.QueryValueEx(k, "AutoConfigURL")[0] or "")
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return out
+
+
+def _winhttp_proxy() -> str:
+    """WinHTTP 自己的代理配置（netsh winhttp set proxy 设的那份）。"""
+    try:
+        class _INFO(ctypes.Structure):
+            _fields_ = [("dwAccessType", ctypes.c_ulong),
+                        ("lpszProxy", ctypes.c_wchar_p),
+                        ("lpszProxyBypass", ctypes.c_wchar_p)]
+
+        info = _INFO()
+        fn = ctypes.windll.winhttp.WinHttpGetDefaultProxyConfiguration
+        fn.argtypes = [ctypes.POINTER(_INFO)]
+        fn.restype = ctypes.c_int
+        if fn(ctypes.byref(info)) and info.dwAccessType == 3:      # NAMED_PROXY
+            return str(info.lpszProxy or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _tunnel_adapters() -> list:
+    """已连接的虚拟网卡 / 隧道网卡（TUN 模式、WireGuard、系统 VPN 都会留下一个）。"""
+    hits = []
+    try:
+        fn = ctypes.windll.iphlpapi.GetAdaptersAddresses
+        fn.argtypes = [ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                       ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        fn.restype = ctypes.c_ulong
+        size = ctypes.c_ulong(16 * 1024)
+        buf = ctypes.create_string_buffer(size.value)
+        flags = 0x0002 | 0x0004 | 0x0008        # 跳过 anycast / multicast / dns
+        rc = fn(0, flags, None, buf, ctypes.byref(size))
+        if rc == 111:                            # ERROR_BUFFER_OVERFLOW
+            buf = ctypes.create_string_buffer(size.value)
+            rc = fn(0, flags, None, buf, ctypes.byref(size))
+        if rc != 0:
+            return hits
+        node = ctypes.cast(buf, ctypes.POINTER(_IP_ADAPTER_ADDRESSES))
+        while node:
+            a = node.contents
+            if a.OperStatus == 1:                # IfOperStatusUp
+                name = " ".join(x for x in (a.FriendlyName, a.Description) if x)
+                low = name.lower()
+                if a.IfType in (23, 131) or any(k in low for k in _PROXY_IF_HINTS):
+                    label = (a.FriendlyName or a.Description or "").strip()
+                    if label and "loopback" not in low and "pseudo" not in low:
+                        if label not in hits:
+                            hits.append(label)
+            node = a.Next
+    except Exception:
+        pass
+    return hits
+
+
+def _proxy_processes() -> list:
+    """正在运行的代理客户端进程。"""
+    names = []
+    try:
+        k = ctypes.windll.kernel32
+        k.CreateToolhelp32Snapshot.argtypes = [ctypes.c_ulong, ctypes.c_ulong]
+        k.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+        k.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W)]
+        k.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W)]
+        k.CloseHandle.argtypes = [ctypes.c_void_p]
+        snap = k.CreateToolhelp32Snapshot(2, 0)          # TH32CS_SNAPPROCESS
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return names
+        try:
+            pe = _PROCESSENTRY32W()
+            pe.dwSize = ctypes.sizeof(pe)
+            ok = k.Process32FirstW(snap, ctypes.byref(pe))
+            while ok:
+                exe = pe.szExeFile
+                low = exe.lower()
+                stem = low[:-4] if low.endswith(".exe") else low
+                if any(h in stem for h in _PROXY_PROC_HINTS) and \
+                        not any(s in stem for s in _PROXY_PROC_SKIP):
+                    if exe not in names:
+                        names.append(exe)
+                ok = k.Process32NextW(snap, ctypes.byref(pe))
+        finally:
+            k.CloseHandle(snap)
+    except Exception:
+        pass
+    return names
+
+
+def env_check() -> dict:
+    """测速前的环境体检：有任一条命中就拦下，别让代理污染数据。"""
+    items = []
+    ie = _ie_proxy_state()
+    if ie.get("enable") and ie.get("server"):
+        items.append({"kind": "system_proxy", "label": "系统代理已开启：" + ie["server"]})
+    if ie.get("pac"):
+        items.append({"kind": "pac", "label": "已配置 PAC 自动代理：" + ie["pac"]})
+    wh = _winhttp_proxy()
+    if wh:
+        items.append({"kind": "winhttp", "label": "WinHTTP 代理：" + wh})
+    for a in _tunnel_adapters():
+        items.append({"kind": "adapter", "label": "虚拟网卡 / 隧道：" + a})
+    for p in _proxy_processes():
+        items.append({"kind": "process", "label": "代理程序在运行：" + p})
+    return {"blocked": bool(items), "items": items}
+
+
+# --------------------------------------------------------------------------
 # HTTP
 # --------------------------------------------------------------------------
 UI_HTML = ""
@@ -593,6 +779,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/beat":
             page_touch()
             return self._json({"ok": True})
+        if p == "/api/check-env":
+            return self._json(env_check())
         if p == "/api/init":
             snap = snapshot()
             return self._json({
@@ -647,6 +835,12 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body()
         if p == "/api/run":
             cfg = load_cfg()
+            probe = env_check()
+            if probe["blocked"]:                 # 后端再兜一次，防止直接调接口绕过
+                log("run blocked: proxy in use -> " +
+                    "; ".join(i["label"] for i in probe["items"]))
+                return self._json({"error": "检测到 VPN / 代理正在运行，请先关闭再测速",
+                                   "blocked": True, "items": probe["items"]})
             try:
                 cfg["sni"] = str(body.get("sni") or DEFAULT_SNI).strip()
                 cfg["port"] = max(1, min(65535, int(body.get("port") or DEFAULT_PORT)))

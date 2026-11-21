@@ -217,6 +217,28 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
   box-shadow:0 16px 40px -18px #000,0 0 0 1px rgba(255,255,255,.03);transition:.28s;z-index:50}
 #toast.on{opacity:1;transform:translate(-50%,0)}
 
+/* ---------- 代理拦截弹窗 ---------- */
+.mask{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+  background:rgba(5,8,14,.66);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+.mask.on{display:flex;animation:maskin .18s ease both}
+@keyframes maskin{from{opacity:0}to{opacity:1}}
+.dialog{width:min(452px,92vw);padding:22px 22px 18px;border-radius:16px;position:relative;
+  background:linear-gradient(180deg,#161c28,#101520);border:1px solid rgba(240,169,122,.26);
+  box-shadow:0 30px 70px -24px #000,inset 0 1px 0 rgba(255,255,255,.06);
+  animation:dlgin .24s cubic-bezier(.2,.8,.3,1) both}
+@keyframes dlgin{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.dialog .warn{display:inline-flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.6px;
+  color:#f0a97a;background:rgba(240,169,122,.1);border:1px solid rgba(240,169,122,.26);
+  padding:4px 9px;border-radius:999px}
+.dialog h3{margin:12px 0 7px;font-size:16px;font-weight:650;color:#f2f5fb}
+.dialog p{margin:0;font-size:12px;line-height:1.65;color:#8b95ab}
+.dialog ul{margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;
+  max-height:186px;overflow:auto}
+.dialog li{font-size:12px;line-height:1.5;color:#c7cfdd;padding:7px 10px;border-radius:9px;
+  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
+.dialog li::before{content:"·";color:#f0a97a;font-weight:700;margin-right:7px}
+.dialog .acts{display:flex;gap:9px;justify-content:flex-end;margin-top:16px}
+
 @media(max-width:1080px){
   main{grid-template-columns:1fr;overflow:auto}
   .side{overflow:visible}
@@ -361,6 +383,20 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
     </section>
   </main>
 </div>
+
+<div class="mask" id="vpnMask">
+  <div class="dialog" role="dialog" aria-modal="true">
+    <span class="warn">环境未就绪</span>
+    <h3>检测到 VPN / 代理正在运行</h3>
+    <p>走代理测出来的是「你到代理」的延迟，不是真实链路，数据不可用。请先关掉系统和代理软件里的代理开关（含 TUN / 全局模式），再重新检测。</p>
+    <ul id="vpnList"></ul>
+    <div class="acts">
+      <button class="btn-sm" id="vpnClose">知道了</button>
+      <button class="btn-sm accent" id="vpnRetry">重新检测</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -525,6 +561,12 @@ async function start(){
   const tries = Math.min(10, Math.max(1, parseInt($("#tries").value)||2));
   const conc  = Math.min(64, Math.max(4, parseInt($("#conc").value)||32));
 
+  // 先体检：代理/VPN 开着测出来的数是假的，直接拦下
+  try{
+    const g = await api("/api/check-env");
+    if(g.blocked){ showVpn(g.items); return; }
+  }catch(e){ /* 体检本身出错就别拦，后端 /api/run 还会再判一次 */ }
+
   // 候选列表改过就顺手存一下，真正做到一键
   const text = $("#cands").value.trim();
   if(text !== (S.candsSaved || "")){
@@ -540,12 +582,28 @@ async function start(){
   render();
   try{
     const d = await api("/api/run", {sni, port, tries, concurrency:conc, family:S.family});
-    if(d.error){ toast(d.error); return; }
+    if(d.error){
+      if(d.blocked) showVpn(d.items); else toast(d.error);
+      return;
+    }
     S.total = d.total; S.running = true;
     lockUI(true);
     loop();
   }catch(e){ toast("启动失败：" + e.message); }
 }
+
+/* ---------- 代理拦截弹窗 ---------- */
+function showVpn(items){
+  const ul = $("#vpnList");
+  ul.textContent = "";
+  (items || []).forEach(it=>{
+    const li = document.createElement("li");
+    li.textContent = typeof it === "string" ? it : (it.label || "");
+    ul.appendChild(li);
+  });
+  $("#vpnMask").classList.add("on");
+}
+function hideVpn(){ $("#vpnMask").classList.remove("on"); }
 
 async function stop(){
   try{ await api("/api/stop", {}); }catch(e){}
@@ -660,6 +718,19 @@ $("#btnCsv").onclick = ()=>{ window.location.href = "/api/export.csv"; };
 
 $("#btnRun").onclick = start;
 $("#btnStop").onclick = stop;
+
+$("#vpnClose").onclick = hideVpn;
+$("#vpnMask").onclick = e => { if(e.target.id === "vpnMask") hideVpn(); };
+$("#vpnRetry").onclick = async ()=>{
+  const btn = $("#vpnRetry"), old = btn.textContent;
+  btn.disabled = true; btn.textContent = "检测中…";
+  try{
+    const g = await api("/api/check-env");
+    if(g.blocked){ showVpn(g.items); toast("仍有代理 / VPN 在运行"); }
+    else { hideVpn(); toast("环境已就绪，开始测速"); start(); }
+  }catch(e){ toast("检测失败：" + e.message); }
+  finally{ btn.disabled = false; btn.textContent = old; }
+};
 
 $("#btnSave").onclick = async ()=>{
   const txt = $("#cands").value;

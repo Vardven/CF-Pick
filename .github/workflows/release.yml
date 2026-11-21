@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # 生成「自上个正式版以来的改动」需要完整 tag 历史
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -92,13 +94,40 @@ jobs:
           Get-Process CF-Pick -ErrorAction SilentlyContinue | Stop-Process -Force
           Write-Host "smoke test passed"
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Changelog for rolling prerelease
+        if: startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-pre'))
+        shell: bash
+        run: |
+          BASE=$(git tag --list 'v*' --sort=-v:refname | grep -Ev -- '-' | grep -vx -- "${GITHUB_REF_NAME}" | head -1)
+          if [ -z "$BASE" ]; then BASE=$(git rev-list --max-parents=0 HEAD | tail -1); fi
+          {
+            echo "**滚动预发布**：同一个 release 会被后续改动反复覆盖，永远放最新的测试包，不再一个改动占一条。"
+            echo ""
+            echo "- 构建时间：$(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "- 提交：\`${GITHUB_SHA:0:7}\`"
+            echo "- 基线（上个正式版）：\`${BASE}\`"
+            echo ""
+            echo "**自 ${BASE} 以来的改动**"
+            echo ""
+            git log --no-merges --pretty='- %s（%h）' "${BASE}..HEAD"
+          } > release-body.md
+          cat release-body.md
+
+      - name: Release (stable)
+        if: startsWith(github.ref, 'refs/tags/') && !(contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-pre'))
         uses: softprops/action-gh-release@v2
         with:
           files: dist/CF-Pick.exe
           generate_release_notes: false
           draft: false
-          # 版本约定：v1.2.3-rc1 / -beta / -alpha → 预发布；纯 v1.2.3 才是正式版。
-          # 平时小改动都发预发布，攒够一批再打正式版 tag。
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-pre') }}
+          prerelease: false
+
+      - name: Release (rolling prerelease)
+        if: startsWith(github.ref, 'refs/tags/') && (contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-pre'))
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CF-Pick.exe
+          name: "预发布（滚动更新）· ${{ github.ref_name }}"
+          body_path: release-body.md
+          draft: false
+          prerelease: true
