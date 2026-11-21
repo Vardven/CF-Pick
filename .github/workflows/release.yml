@@ -37,22 +37,55 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\CF-Pick.exe" -PassThru
-          Start-Sleep -Seconds 6
-          $ok = $false
-          foreach ($port in 5390..5405) {
-            try {
-              $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/ping" -UseBasicParsing -TimeoutSec 2
-              if ($r.Content -match "ok") { $ok = $true; Write-Host "alive on $port"; break }
-            } catch { }
+          $ErrorActionPreference = "Continue"
+          $exe = (Resolve-Path "dist\CF-Pick.exe").Path
+          $work = (Resolve-Path "dist").Path
+          Write-Host "exe: $exe"
+          $p = Start-Process -FilePath $exe -WorkingDirectory $work -PassThru
+          Write-Host "pid: $($p.Id)"
+
+          $hit = 0
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline -and $hit -eq 0) {
+            Start-Sleep -Seconds 2
+            foreach ($port in 5390..5405) {
+              try {
+                $c = New-Object System.Net.Sockets.TcpClient
+                $c.Connect("127.0.0.1", $port)
+                if ($c.Connected) {
+                  $c.Close()
+                  $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/ping" -UseBasicParsing -TimeoutSec 5
+                  if ($r.Content -match "ok") { $hit = $port; break }
+                }
+                $c.Dispose()
+              } catch { }
+            }
+            if ($hit -eq 0) { Write-Host "waiting... alive=$($p.HasExited -eq $false)" }
           }
-          if (-not $ok) { throw "exe did not start" }
-          Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/shutdown" -UseBasicParsing -TimeoutSec 2 | Out-Null
+
+          if ($hit -eq 0) {
+            Write-Host "=== diagnostics ==="
+            Get-Process CF-Pick -ErrorAction SilentlyContinue | Format-Table Id,ProcessName,StartTime | Out-String | Write-Host
+            foreach ($f in @("$work\CF-Pick.log", "$env:LOCALAPPDATA\CF-Pick\CF-Pick.log")) {
+              if (Test-Path $f) { Write-Host "--- $f ---"; Get-Content $f -Tail 40 | Write-Host }
+            }
+            Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+              Where-Object { $_.LocalPort -ge 5380 -and $_.LocalPort -le 5410 } |
+              Format-Table LocalAddress,LocalPort,OwningProcess | Out-String | Write-Host
+            Get-Process CF-Pick -ErrorAction SilentlyContinue | Stop-Process -Force
+            throw "smoke test failed: no port responded"
+          }
+
+          Write-Host "alive on $hit"
+          Invoke-WebRequest -Uri "http://127.0.0.1:$hit/api/shutdown" -UseBasicParsing -TimeoutSec 5 | Out-Null
+          Start-Sleep -Seconds 2
+          Get-Process CF-Pick -ErrorAction SilentlyContinue | Stop-Process -Force
+          Write-Host "smoke test passed"
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/CF-Pick.exe
-          generate_release_notes: true
+          generate_release_notes: false
           draft: false
