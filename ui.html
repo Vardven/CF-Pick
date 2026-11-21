@@ -604,9 +604,14 @@ $("#btnSave").onclick = async ()=>{
 };
 
 $("#btnExit").onclick = async ()=>{
-  if(!confirm("退出测速台？")) return;
-  try{ await api("/api/shutdown", {}); }catch(e){}
-  document.body.innerHTML = '<div style="height:100vh;display:grid;place-items:center;color:#5f6a80;font-size:13px">已退出，可以关闭此页面</div>';
+  if(S.running){ try{ await api("/api/stop", {}); }catch(e){} }
+  $("#btnExit").disabled = true;
+  let mode = "exit";
+  try{ const r = await api("/api/exit", {}); mode = (r && r.mode) || "exit"; }catch(e){}
+  const msg = mode === "minimize"
+    ? "已最小化到系统托盘<br><span style='color:#8b93a7'>双击托盘图标可重新打开界面，右键可彻底退出</span>"
+    : "已彻底退出，可以关闭此页面";
+  document.body.innerHTML = '<div style="height:100vh;display:grid;place-items:center;color:#5f6a80;font-size:13px;text-align:center;line-height:1.9">'+msg+'</div>';
 };
 
 document.addEventListener("keydown", e=>{
