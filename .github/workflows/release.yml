@@ -99,3 +99,6 @@ jobs:
           files: dist/CF-Pick.exe
           generate_release_notes: false
           draft: false
+          # 版本约定：v1.2.3-rc1 / -beta / -alpha → 预发布；纯 v1.2.3 才是正式版。
+          # 平时小改动都发预发布，攒够一批再打正式版 tag。
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-pre') }}
