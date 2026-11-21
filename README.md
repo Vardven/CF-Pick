@@ -65,6 +65,13 @@ CF 按 SNI 认出你的 zone 并回源，于是这个耗时天然包含两段：
 
 > exe 放到了只读目录（如 `Program Files`）也能跑，配置文件会自动落到 `%LOCALAPPDATA%\CF-Pick`。
 
+### 关于双击后那几秒
+
+单文件 exe 双击后需要先把内置的 Python 运行时解压到临时目录（首次启动还要过一遍杀毒扫描），所以会等 1–3 秒界面才出来。为了不让人以为没点着而连点几次，做了两件事：
+
+- **启动画面**：双击后立刻弹出一张小卡片，显示「正在启动 / 正在载入界面 / 正在打开界面」，界面就绪时自动消失
+- **单实例保护**：重复双击不会开出好几个测速台，第二个实例会等第一个就绪后直接把浏览器指过去，然后自己退出
+
 ### 界面
 
 | 区域 | 说明 |
@@ -153,7 +160,9 @@ CF-Pick/
 ├─ cfpick.py                     # 测速引擎 + 本地 HTTP 服务（纯标准库）
 ├─ ui.html                       # 界面（原生 JS，无框架）
 ├─ gen_icon.py                   # 生成多尺寸 ICO
+├─ gen_splash.py                 # 生成启动画面 splash.png
 ├─ icon.ico
+├─ splash.png
 ├─ cf-domains.txt                # 内置候选清单（一行一个）
 ├─ build.cmd                     # Windows 一键打包
 ├─ docs/screenshot.png           # README 界面截图

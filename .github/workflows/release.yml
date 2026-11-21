@@ -31,14 +31,21 @@ jobs:
         run: python -m PyInstaller --version
 
       - name: Build exe
-        run: >
-          python -m PyInstaller --noconfirm --clean --onefile --noconsole
-          --name CF-Pick --icon icon.ico
-          --add-data "ui.html;." --add-data "cf-domains.txt;."
-          cfpick.py
+        shell: bash
+        run: |
+          if python -c "import tkinter" 2>/dev/null; then
+            SPLASH="--splash splash.png"; echo "splash: on"
+          else
+            SPLASH=""; echo "splash: skipped (tkinter not available)"
+          fi
+          python -m PyInstaller --noconfirm --clean --onefile --noconsole \
+            --name CF-Pick --icon icon.ico $SPLASH \
+            --add-data "ui.html;." --add-data "cf-domains.txt;." cfpick.py
 
       - name: Smoke test
         shell: pwsh
+        env:
+          CF_PICK_NO_BROWSER: "1"
         run: |
           $ErrorActionPreference = "Continue"
           $exe = (Resolve-Path "dist\CF-Pick.exe").Path

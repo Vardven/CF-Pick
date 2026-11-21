@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 DEFAULT_SNI = "cdn.example.com"
 DEFAULT_PORT = 443
 PORTS = list(range(5390, 5406))
@@ -101,11 +101,48 @@ def log(msg: str) -> None:
 
 def fatal(msg: str) -> None:
     log("FATAL " + msg)
+    splash_close()
     try:
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, msg, APP, 0x10)
     except Exception:
         pass
+
+
+# --------------------------------------------------------------------------
+# 启动体验：splash 画面 + 单实例互斥
+# --------------------------------------------------------------------------
+def splash_text(msg: str) -> None:
+    """更新启动画面底部的提示文字（仅在打包后存在 pyi_splash）。"""
+    try:
+        import pyi_splash  # type: ignore
+        pyi_splash.update_text(msg)
+    except Exception:
+        pass
+
+
+def splash_close() -> None:
+    try:
+        import pyi_splash  # type: ignore
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
+MUTEX_NAME = "CF-Pick-SingleInstance"
+_mutex_handle = None
+
+
+def is_first_instance() -> bool:
+    """用命名互斥体判断是否已有实例。第二个实例会立刻知道，不必等端口探测。"""
+    global _mutex_handle
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        _mutex_handle = k32.CreateMutexW(None, False, MUTEX_NAME)
+        return k32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+    except Exception:
+        return True  # 非 Windows 或调用失败：不拦，照常启动
 
 
 # --------------------------------------------------------------------------
@@ -597,6 +634,22 @@ class Handler(BaseHTTPRequestHandler):
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
+def open_ui(port: int) -> None:
+    """打开浏览器界面。CF_PICK_NO_BROWSER=1 时不打开（自动化测试用）。"""
+    if os.environ.get("CF_PICK_NO_BROWSER") == "1":
+        return
+    try:
+        webbrowser.open("http://127.0.0.1:%d/" % port)
+    except Exception:
+        pass
+
+
+def close_splash_then_open(port: int) -> None:
+    """先撤掉启动图，再开浏览器，避免浏览器窗口被启动图挡一下。"""
+    splash_close()
+    threading.Timer(0.4, lambda: open_ui(port)).start()
+
+
 def already_running(port: int) -> bool:
     try:
         import urllib.request
@@ -607,12 +660,25 @@ def already_running(port: int) -> bool:
 
 
 def main():
-    load_ui()
+    t0 = time.time()
+    first = is_first_instance()
 
-    for p in PORTS:
-        if already_running(p):
-            webbrowser.open("http://127.0.0.1:%d/" % p)
-            return
+    if not first:
+        # 已有实例在跑：等它把端口监听起来，然后把浏览器指过去，自己退出。
+        splash_text("已有一个测速台在运行，正在打开…")
+        deadline = t0 + 25
+        while time.time() < deadline:
+            for p in PORTS:
+                if already_running(p):
+                    log("second instance -> reuse 127.0.0.1:%d" % p)
+                    splash_close()
+                    open_ui(p)
+                    return
+            time.sleep(0.25)
+        log("second instance: 未找到已在运行的实例，改为自行启动")
+
+    splash_text("正在载入界面…")
+    load_ui()
 
     srv = None
     for p in PORTS:
@@ -627,8 +693,9 @@ def main():
         fatal("端口 %d-%d 全部被占用，无法启动。" % (PORTS[0], PORTS[-1]))
         return
 
-    log("listening on 127.0.0.1:%d  data=%s" % (port, DATA))
-    threading.Timer(0.5, lambda: webbrowser.open("http://127.0.0.1:%d/" % port)).start()
+    log("listening on 127.0.0.1:%d  data=%s  启动耗时 %.2fs" % (port, DATA, time.time() - t0))
+    splash_text("正在打开界面…")
+    close_splash_then_open(port)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
