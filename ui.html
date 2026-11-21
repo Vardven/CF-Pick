@@ -541,7 +541,6 @@ async function beat(){
 
 function scheduleBeat(){
   clearTimeout(CONN.timer);
-  if(S.goneQuit) return;                 // 已经彻底退出：别再心跳，否则会骗到下次启动「页面还开着」
   CONN.timer = setTimeout(async ()=>{
     await beat();
     scheduleBeat();
@@ -561,15 +560,35 @@ function startBeat(){
 }
 
 /* ---------- 最小化到托盘 / 彻底退出：只盖一层遮罩，页面 DOM 保留 ---------- */
+let gonePoll = null;
+
+/* 彻底退出后守在这里：服务一旦重新起来，这一页直接刷新成测速台，
+   于是双击 exe 是「原来的标签页活过来」，而不是又开一个新标签。 */
+function watchRestart(){
+  clearTimeout(gonePoll);
+  const tick = async ()=>{
+    try{
+      const ac = new AbortController();
+      const tm = setTimeout(()=>ac.abort(), 1500);
+      const r = await fetch("/api/ping?t=" + Date.now(), {cache:"no-store", signal:ac.signal});
+      clearTimeout(tm);
+      if(r.ok && (await r.text()) === "ok"){ location.reload(); return; }
+    }catch(e){}
+    gonePoll = setTimeout(tick, 1800);
+  };
+  // 退出的接口是先回包、再延时 0.4s 关进程，所以头一次要等一会儿再探，
+  // 否则会探到「还没死」的自己，刚盖上遮罩就刷新没了
+  gonePoll = setTimeout(tick, 1300);
+}
+
 function showGone(quit){
   const box = $("#goneMask");
   if(quit && !S.goneQuit){
     S.goneQuit = true;
-    // 改掉标题：这个页面成了「墓碑页」，别再让下次启动把它当成测速台复用
-    document.title = "CF-Pick · 已退出";
     box.innerHTML = '<div class="gone"><div class="gone-dot" style="background:#5b6579;box-shadow:0 0 0 5px rgba(91,101,121,.16)"></div>'
       + '<h3>已彻底退出</h3>'
-      + '<p>本地测速服务已经关掉了，这个页面可以关掉。<br>想再用的话，双击 CF-Pick.exe 重新启动。</p></div>';
+      + '<p>本地测速服务已经关掉了。<br>再双击一次 CF-Pick.exe，这一页会自动变回测速台，不用另开新标签。</p></div>';
+    watchRestart();
   }
   S.minimized = !quit;
   box.classList.add("on");
@@ -584,6 +603,9 @@ function restoreUI(){
   setBeatDelay();
   toast("已回到测速台");
 }
+
+/* 窗口被拽到前台时，立刻查一次（托盘双击 / 再双击 exe 都会先把窗口前置） */
+window.addEventListener("focus", ()=>{ if(S.goneQuit) watchRestart(); });
 
 /* ---------- boot ---------- */
 function applyDemo(){
