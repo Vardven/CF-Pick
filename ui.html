@@ -83,6 +83,27 @@ textarea{resize:vertical;min-height:118px;font-family:ui-monospace,"Cascadia Mon
 .hint{font-size:11px;color:#616c82;line-height:1.6;margin:8px 0 0}
 .hint code{color:#8fa3c4;background:rgba(255,255,255,.05);padding:1px 5px;border-radius:4px;font-size:10.5px}
 
+/* SNI 说明：默认收起，点「?」或空着点测速时展开 */
+.lab{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.lab label{margin:0}
+.help-dot{width:15px;height:15px;flex:none;padding:0;border-radius:50%;cursor:pointer;
+  display:grid;place-items:center;font-family:inherit;font-size:10px;line-height:1;
+  color:#8b95ab;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.16);transition:.16s}
+.help-dot:hover{color:#67e8f9;border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.1)}
+.sni-note{display:none;margin-top:8px;padding:10px 11px;border-radius:10px;
+  font-size:11px;line-height:1.68;color:#a9b4c9;
+  background:rgba(34,211,238,.06);border:1px solid rgba(34,211,238,.2)}
+.sni-note.on{display:block;animation:notein .22s ease both}
+@keyframes notein{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.sni-note b{color:#67e8f9;font-weight:600}
+.sni-note code{color:#c7d5ea;background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px;font-size:10.5px}
+.sni-note em{display:block;margin-top:5px;font-style:normal;color:#7c869c}
+input.bad{border-color:rgba(244,114,114,.62)!important;
+  box-shadow:0 0 0 3px rgba(244,114,114,.13)!important;
+  animation:shake .4s cubic-bezier(.36,.07,.19,.97) both}
+@keyframes shake{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(2px)}
+  30%,50%,70%{transform:translateX(-3px)}40%,60%{transform:translateX(3px)}}
+
 .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;border-radius:11px;
   background:rgba(8,11,19,.72);border:1px solid rgba(255,255,255,.08)}
 .seg button{appearance:none;border:0;background:transparent;color:#8b95ab;font-size:12px;padding:7px 0;
@@ -273,8 +294,16 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
       <section class="card sect">
         <h2>目标</h2>
         <div class="field">
-          <label>SNI / Host（你的 CDN 域名）</label>
-          <input type="text" id="sni" spellcheck="false" placeholder="cdn-test.example.com">
+          <div class="lab">
+            <label for="sni">SNI / Host（你的 CDN 域名）</label>
+            <button type="button" class="help-dot" id="sniHelp" title="什么是 CDN 域名？">?</button>
+          </div>
+          <input type="text" id="sni" spellcheck="false" placeholder="如 cdn-test.example.com">
+          <div class="sni-note" id="sniNote">
+            <b>CDN 域名</b>就是你在 Cloudflare 里把橙云打开（Proxied，已代理）的那个子域，
+            例如 <code>cdn.example.com</code>。它不是服务器 IP，也不是没开橙云的主域名。
+            <em>在哪找：Cloudflare 控制台 → DNS → 记录列表里「代理状态」显示已代理的那一条，复制它的名称。</em>
+          </div>
         </div>
         <div class="row">
           <div class="field">
@@ -556,7 +585,10 @@ function lockUI(run){
 
 async function start(){
   const sni = $("#sni").value.trim();
-  if(!sni){ toast("请先填 SNI / Host"); return; }
+  if(!sni){ sniHint("empty"); return; }
+  if(/^[a-z][a-z0-9+.-]*:\/\//i.test(sni) || /[\/\s]/.test(sni)){
+    sniHint("format"); return;
+  }
   const port = parseInt($("#port").value)||443;
   const tries = Math.min(10, Math.max(1, parseInt($("#tries").value)||2));
   const conc  = Math.min(64, Math.max(4, parseInt($("#conc").value)||32));
@@ -590,6 +622,19 @@ async function start(){
     lockUI(true);
     loop();
   }catch(e){ toast("启动失败：" + e.message); }
+}
+
+/* ---------- SNI 引导：空着点测速时高亮输入框并展开说明 ---------- */
+function sniHint(why){
+  const el = $("#sni");
+  $("#sniNote").classList.add("on");
+  el.classList.remove("bad");
+  void el.offsetWidth;              // 强制重排，抖动才能重复触发
+  el.classList.add("bad");
+  el.focus();
+  toast(why === "format"
+        ? "只填域名，别带 https:// 或路径，例如 cdn-test.example.com"
+        : "先填入你的 CDN 域名 —— 下面有说明，看一眼就知道填什么");
 }
 
 /* ---------- 代理拦截弹窗 ---------- */
@@ -718,6 +763,14 @@ $("#btnCsv").onclick = ()=>{ window.location.href = "/api/export.csv"; };
 
 $("#btnRun").onclick = start;
 $("#btnStop").onclick = stop;
+
+$("#sniHelp").onclick = e => { e.preventDefault(); $("#sniNote").classList.toggle("on"); };
+$("#sni").oninput = e => {
+  if(e.target.value.trim()){
+    e.target.classList.remove("bad");
+    $("#sniNote").classList.remove("on");
+  }
+};
 
 $("#vpnClose").onclick = hideVpn;
 $("#vpnMask").onclick = e => { if(e.target.id === "vpnMask") hideVpn(); };
