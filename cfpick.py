@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 DEFAULT_SNI = "cdn.example.com"
 DEFAULT_PORT = 443
 PORTS = list(range(5390, 5406))
@@ -156,6 +156,7 @@ DEFAULT_CFG = {
     "concurrency": 32,
     "family": "auto",
     "max_ips": 2,
+    "auto_open": True,
 }
 
 
@@ -177,6 +178,35 @@ def save_cfg(cfg: dict) -> None:
             json.dump({k: cfg.get(k, DEFAULT_CFG[k]) for k in DEFAULT_CFG}, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+# --------------------------------------------------------------------------
+# 「页面还开着吗」的痕迹：靠网页的心跳判断，避免重复开标签页
+# --------------------------------------------------------------------------
+PAGE_FILE = os.path.join(DATA, "page.alive")
+PAGE = {"last": 0.0, "saved": 0.0}
+
+
+def page_touch() -> None:
+    """网页每 2.5 秒心跳一次，这里只记时间戳（写盘做节流）。"""
+    now = time.time()
+    PAGE["last"] = now
+    if now - PAGE["saved"] > 20:
+        PAGE["saved"] = now
+        try:
+            with open(PAGE_FILE, "w", encoding="utf-8") as f:
+                f.write("%.0f" % now)
+        except Exception:
+            pass
+
+
+def page_recall() -> float:
+    """上一次运行期间，最后有页面在线的时间（跨进程保留，用来判断值不值得等心跳）。"""
+    try:
+        with open(PAGE_FILE, "r", encoding="utf-8") as f:
+            return float(f.read().strip() or 0)
+    except Exception:
+        return 0.0
 
 
 def default_candidates() -> list:
@@ -556,6 +586,9 @@ class Handler(BaseHTTPRequestHandler):
         if p in ("/", "/index.html"):
             return self._send(200, UI_HTML or load_ui(), "text/html; charset=utf-8")
         if p == "/api/ping":
+            # 带 page=1 的是网页心跳；不带的是「还有实例在跑吗」的端口探测
+            if "page=1" in (u.query or ""):
+                page_touch()
             return self._send(200, "ok", "text/plain")
         if p == "/api/init":
             snap = snapshot()
@@ -623,6 +656,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "SNI / Host 不能为空"})
             save_cfg(cfg)
             return self._json(start_run(cfg))
+        if p == "/api/prefs":
+            cfg = load_cfg()
+            if "auto_open" in body:
+                cfg["auto_open"] = bool(body.get("auto_open"))
+            save_cfg(cfg)
+            return self._json({"auto_open": cfg["auto_open"]})
         if p == "/api/stop":
             STATE.stop.set()
             return self._json({"stopped": True})
@@ -1194,14 +1233,102 @@ def shell_start(port: int) -> bool:
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
-def open_ui(port: int) -> None:
-    """打开浏览器界面。CF_PICK_NO_BROWSER=1 时不打开（自动化测试用）。"""
+PAGE_TITLE = "CF 入口优选"       # 与 ui.html 的 <title> 对应，用来找已开着的浏览器窗口
+
+
+def find_page_window():
+    """找开着测速台页面的浏览器窗口（只管可见窗口）。"""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        u32 = ctypes.windll.user32
+        hits = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def cb(hwnd, _lp):
+            if not u32.IsWindowVisible(hwnd):
+                return True
+            n = u32.GetWindowTextLengthW(hwnd)
+            if n > 0:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u32.GetWindowTextW(hwnd, buf, n + 1)
+                if PAGE_TITLE in buf.value:
+                    hits.append(hwnd)
+            return True
+
+        u32.EnumWindows(cb, None)
+        return hits[0] if hits else None
+    except Exception:
+        return None
+
+
+def focus_window(hwnd) -> None:
+    """把窗口拽到前台（SetForegroundWindow 受前台锁限制，先置顶再取消）。"""
+    try:
+        import ctypes
+        u32 = ctypes.windll.user32
+        u32.ShowWindow(hwnd, 9)                                   # SW_RESTORE
+        u32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002)    # TOPMOST
+        u32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, 0x0001 | 0x0002)    # NOTOPMOST
+        u32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def focus_existing_page() -> bool:
+    """已有页面窗口就切到前台，返回是否复用。"""
+    hwnd = find_page_window()
+    if not hwnd:
+        return False
+    focus_window(hwnd)
+    log("reuse existing page window")
+    return True
+
+
+def open_tab(port: int) -> None:
     if os.environ.get("CF_PICK_NO_BROWSER") == "1":
         return
     try:
         webbrowser.open("http://127.0.0.1:%d/" % port)
     except Exception:
         pass
+
+
+def open_ui(port: int) -> bool:
+    """状态小窗 / 托盘按钮用：能复用就复用，否则开一个新标签页。"""
+    if os.environ.get("CF_PICK_NO_BROWSER") == "1":
+        return False
+    if focus_existing_page():
+        return True
+    open_tab(port)
+    return False
+
+
+def startup_open(port: int) -> None:
+    """启动时决定要不要开浏览器。
+
+    优先顺序：
+      1) 配置里关了「自动打开界面」→ 什么都不做，等用户点状态小窗的按钮
+      2) 已有可见的页面窗口 → 切到前台（不再开新标签页）
+      3) 没有可见窗口，但上次运行时页面在线过 → 等它的心跳（最多 4 秒），有就不开新页
+      4) 以上都不成立 → 打开浏览器
+    """
+    if os.environ.get("CF_PICK_NO_BROWSER") == "1":
+        return
+    if not load_cfg().get("auto_open", True):
+        log("auto_open=off，不自动打开界面")
+        return
+    if focus_existing_page():
+        return
+    if time.time() - page_recall() < 12 * 3600:
+        t0 = time.time()
+        while time.time() - t0 < 4.0:
+            if PAGE["last"] >= t0:          # 老页面自己心跳上来了
+                log("page already open (heartbeat) -> no new tab")
+                return
+            time.sleep(0.2)
+    open_tab(port)
 
 
 def already_running(port: int) -> bool:
@@ -1252,7 +1379,7 @@ def main():
     splash_close()
     dpi_aware()
     log("status window + tray: %s" % ("on" if shell_start(port) else "off"))
-    threading.Timer(0.5, lambda: open_ui(port)).start()
+    threading.Timer(0.35, lambda: startup_open(port)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

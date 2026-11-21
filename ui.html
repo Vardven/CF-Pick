@@ -55,6 +55,12 @@ h1 b{background:linear-gradient(92deg,#67e8f9,#a78bfa 60%,#f0abfc);-webkit-backg
 body.offline #btnRun{opacity:.45}
 .offline-tip{display:none;margin:9px 0 0;font-size:11px;line-height:1.5;color:#f0a97a}
 body.offline .offline-tip{display:block}
+.check{display:flex;align-items:center;gap:8px;margin-top:13px;font-size:11.5px;color:#8b95ab;cursor:pointer;user-select:none;line-height:1.4}
+.check input{appearance:none;-webkit-appearance:none;width:15px;height:15px;border-radius:5px;flex:none;
+  border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.045);position:relative;cursor:pointer;margin:0}
+.check input:checked{background:linear-gradient(135deg,#22d3ee,#6366f1);border-color:transparent}
+.check input:checked::after{content:"";position:absolute;left:4px;top:1px;width:5px;height:9px;
+  border:2px solid #0b0f18;border-top:0;border-left:0;transform:rotate(42deg)}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
 
 /* ---------- layout ---------- */
@@ -279,12 +285,15 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
             <output id="concOut">32</output>
           </div>
         </div>
+        <label class="check" title="关闭后，双击 exe 不会再弹标签页；界面改由状态小窗的「打开界面」按钮打开">
+          <input type="checkbox" id="autoOpen" checked><span>启动 exe 时自动打开界面</span>
+        </label>
         <div class="stack" style="margin-top:14px">
           <button class="btn btn-primary" id="btnRun">开 始 测 速</button>
           <button class="btn btn-ghost" id="btnStop" disabled>停止</button>
         </div>
         <p class="hint">测速时请先退出代理软件（含 TUN），否则结果不可信。</p>
-        <p class="offline-tip" id="offlineTip">与测速台断开 —— 程序可能已退出，双击 CF-Pick.exe 即可恢复。</p>
+        <p class="offline-tip" id="offlineTip">与测速台断开 —— 程序可能已退出。重新双击 CF-Pick.exe 即可恢复；若已重开仍是这个状态，按 F5 刷新本页。</p>
       </section>
 
       <details class="card" id="drawer">
@@ -426,7 +435,7 @@ async function beat(){
   try{
     const ac = new AbortController();
     const tm = setTimeout(()=>ac.abort(), 1600);
-    const r = await fetch("/api/ping?t=" + Date.now(), {cache:"no-store", signal:ac.signal});
+    const r = await fetch("/api/ping?page=1&t=" + Date.now(), {cache:"no-store", signal:ac.signal});
     clearTimeout(tm);
     ok = r.ok && (await r.text()).trim() === "ok";
   }catch(e){ ok = false; }
@@ -471,6 +480,7 @@ async function boot(){
     $("#conc").value = d.config.concurrency || 32;
     $("#concOut").textContent = $("#conc").value;
     setFamily(d.config.family || "auto", false);
+    $("#autoOpen").checked = d.config.auto_open !== false;
     $("#cands").value = (d.candidates || []).join("\n");
     S.candsSaved = $("#cands").value;
     $("#candCount").textContent = (d.candidates || []).length + " 项";
@@ -502,6 +512,14 @@ document.querySelectorAll("#fam button").forEach(b=>{
   b.onclick = (e)=>{ e.preventDefault(); setFamily(b.dataset.v, true); };
 });
 $("#conc").oninput = e => $("#concOut").textContent = e.target.value;
+$("#autoOpen").onchange = async e => {
+  const on = e.target.checked;
+  try{
+    await api("/api/prefs", {auto_open: on});
+    toast(on ? "以后双击 exe 会自动打开界面（已开着的页面会直接复用）"
+             : "以后双击 exe 只留状态小窗，点「打开界面」再进");
+  }catch(err){ e.target.checked = !on; toast("保存失败：" + err.message); }
+};
 
 /* ---------- run ---------- */
 function lockUI(run){
