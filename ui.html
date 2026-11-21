@@ -49,6 +49,12 @@ h1 b{background:linear-gradient(92deg,#67e8f9,#a78bfa 60%,#f0abfc);-webkit-backg
 .chip.run i{background:#22d3ee;box-shadow:0 0 0 3px rgba(34,211,238,.18);animation:pulse 1.4s infinite}
 .chip.ok{color:#6ee7b7;border-color:rgba(52,211,153,.3);background:rgba(52,211,153,.08)}
 .chip.ok i{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.16)}
+.chip.off{color:#4e5769;border-color:rgba(255,255,255,.05);background:rgba(255,255,255,.02)}
+.chip.off i{background:#3f4757;box-shadow:0 0 0 3px rgba(63,71,87,.12)}
+.chip.off span{opacity:.9}
+body.offline #btnRun{opacity:.45}
+.offline-tip{display:none;margin:9px 0 0;font-size:11px;line-height:1.5;color:#f0a97a}
+body.offline .offline-tip{display:block}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
 
 /* ---------- layout ---------- */
@@ -235,7 +241,7 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
       </div>
     </div>
     <div class="head-right">
-      <span class="chip" id="chip"><i></i><span id="chipText">就绪</span></span>
+      <span class="chip off" id="chip"><i></i><span id="chipText">连接中</span></span>
       <button class="btn-sm" id="btnExit">退出</button>
     </div>
   </header>
@@ -278,6 +284,7 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
           <button class="btn btn-ghost" id="btnStop" disabled>停止</button>
         </div>
         <p class="hint">测速时请先退出代理软件（含 TUN），否则结果不可信。</p>
+        <p class="offline-tip" id="offlineTip">与测速台断开 —— 程序可能已退出，双击 CF-Pick.exe 即可恢复。</p>
       </section>
 
       <details class="card" id="drawer">
@@ -379,6 +386,64 @@ async function api(path, body){
   return r.json();
 }
 
+/* ---------- 连接状态：心跳探测本机服务是否还活着 ---------- */
+const CONN = {ok:false, seen:false, timer:null};
+let CHIP = "off";                       // off | ok | run | done
+
+function setChip(state){
+  CHIP = state;
+  const chip = $("#chip"), txt = $("#chipText");
+  chip.className = "chip" + (state==="ok"||state==="done" ? " ok" : state==="run" ? " run" : " off");
+  txt.textContent = state==="run" ? "测速中"
+                  : state==="done" ? "完成"
+                  : state==="ok" ? "就绪" : "未就绪";
+  chip.title = state==="off" ? "本地测速服务没有响应，程序可能已退出"
+             : state==="ok"  ? "本地服务在线，可以开始测速"
+             : state==="run" ? "正在测速"
+             : "刚刚测完";
+}
+
+function applyConn(){
+  const ok = CONN.ok;
+  document.body.classList.toggle("offline", !ok);
+
+  if(!ok && S.running){                 // 测速途中掉线：停轮询、解锁界面
+    S.running = false;
+    clearTimeout(S.poll);
+    $("#btnStop").disabled = true;
+    ["sni","port","tries","conc","btnSave"].forEach(id=>{ $("#"+id).disabled = false; });
+    document.querySelectorAll("#fam button").forEach(b=>b.disabled = false);
+  }
+
+  $("#btnRun").disabled = !ok || S.running;
+  if(!ok){ setChip("off"); return; }
+  if(CHIP === "run" || CHIP === "done") return;   // 这两个状态归测速流程管
+  setChip("ok");
+}
+
+async function beat(){
+  let ok = false;
+  try{
+    const ac = new AbortController();
+    const tm = setTimeout(()=>ac.abort(), 1600);
+    const r = await fetch("/api/ping?t=" + Date.now(), {cache:"no-store", signal:ac.signal});
+    clearTimeout(tm);
+    ok = r.ok && (await r.text()).trim() === "ok";
+  }catch(e){ ok = false; }
+
+  const first = !CONN.seen;
+  if(ok === CONN.ok && !first) return;
+  CONN.ok = ok; CONN.seen = true;
+  applyConn();
+  if(!first) toast(ok ? "已重新连上测速台" : "与测速台断开，程序可能已退出");
+}
+
+function startBeat(){
+  clearInterval(CONN.timer);
+  CONN.timer = setInterval(beat, 2500);
+  beat();
+}
+
 /* ---------- boot ---------- */
 function applyDemo(){
   $("#sni").value = "cdn.example.com";
@@ -397,6 +462,7 @@ function applyDemo(){
 
 async function boot(){
   if(location.protocol === "file:"){ applyDemo(); return; }
+  startBeat();
   try{
     const d = await api("/api/init");
     $("#sni").value = d.config.sni || "";
@@ -439,14 +505,15 @@ $("#conc").oninput = e => $("#concOut").textContent = e.target.value;
 
 /* ---------- run ---------- */
 function lockUI(run){
-  ["sni","port","tries","conc","btnSave","btnRun"].forEach(id=>{
+  S.running = run;
+  ["sni","port","tries","conc","btnSave"].forEach(id=>{
     $("#"+id).disabled = run;
   });
+  $("#btnRun").disabled = run || !CONN.ok;
   $("#btnStop").disabled = !run;
   document.querySelectorAll("#fam button").forEach(b=>b.disabled = run);
-  const chip = $("#chip"), txt = $("#chipText");
-  chip.className = "chip" + (run ? " run" : "");
-  txt.textContent = run ? "测速中" : "就绪";
+  if(run) setChip("run");
+  else if(CHIP === "run" || CHIP === "done") setChip(CONN.ok ? "ok" : "off");
 }
 
 async function start(){
@@ -502,10 +569,9 @@ async function tick(){
 
   if(d.running){ S.poll = setTimeout(tick, 320); }
   else{
-    S.running = false;
     lockUI(false);
-    $("#chip").className = "chip ok";
-    $("#chipText").textContent = "完成";
+    setChip("done");
+    setTimeout(()=>{ if(CHIP === "done") setChip(CONN.ok ? "ok" : "off"); }, 4000);
     $("#progText").innerHTML = "测试完成 · 共 <b>" + S.total + "</b> 个入口";
     $("#boardNote").textContent = "最终榜单";
     toast("测速完成，共 " + S.total + " 个入口");
