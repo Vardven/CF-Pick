@@ -8,6 +8,10 @@
 ![license](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
 ![release](https://img.shields.io/github/v/release/Vardven/CF-Pick?style=flat-square)
 
+![界面截图](docs/screenshot.png)
+
+<sub>真实测速结果截图。延迟数值随网络环境与时段变化，仅作界面示意。</sub>
+
 ---
 
 ## 它解决什么问题
@@ -152,6 +156,7 @@ CF-Pick/
 ├─ icon.ico
 ├─ cf-domains.txt                # 内置候选清单（一行一个）
 ├─ build.cmd                     # Windows 一键打包
+├─ docs/screenshot.png           # README 界面截图
 └─ .github/workflows/release.yml # 打 tag 自动构建并发布
 ```
 
