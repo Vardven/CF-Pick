@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 DEFAULT_SNI = "cdn.example.com"
 DEFAULT_PORT = 443
 PORTS = list(range(5390, 5406))
@@ -592,7 +592,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, "ok", "text/plain")
         if p == "/api/beat":
             page_touch()
-            return self._json({"ok": True, "auto_open": auto_open_setting()})
+            return self._json({"ok": True})
         if p == "/api/init":
             snap = snapshot()
             return self._json({
@@ -659,10 +659,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "SNI / Host 不能为空"})
             save_cfg(cfg)
             return self._json(start_run(cfg))
-        if p == "/api/prefs":
-            if "auto_open" in body:
-                return self._json({"auto_open": set_auto_open(bool(body.get("auto_open")))})
-            return self._json({"auto_open": auto_open_setting()})
         if p == "/api/stop":
             STATE.stop.set()
             return self._json({"stopped": True})
