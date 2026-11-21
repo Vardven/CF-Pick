@@ -1,0 +1,18 @@
+# 构建产物
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# 运行时生成的数据（不入库）
+CF-Pick.log
+CF-Pick.candidates.txt
+CF-Pick.config.json
+preview*.png
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

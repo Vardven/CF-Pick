@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build icon
+        run: python gen_icon.py
+
+      - name: Build exe
+        run: >
+          python -m PyInstaller --noconfirm --clean --onefile --noconsole
+          --name CF-Pick --icon icon.ico
+          --add-data "ui.html;." --add-data "cf-domains.txt;."
+          cfpick.py
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\CF-Pick.exe" -PassThru
+          Start-Sleep -Seconds 6
+          $ok = $false
+          foreach ($port in 5390..5405) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/ping" -UseBasicParsing -TimeoutSec 2
+              if ($r.Content -match "ok") { $ok = $true; Write-Host "alive on $port"; break }
+            } catch { }
+          }
+          if (-not $ok) { throw "exe did not start" }
+          Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/shutdown" -UseBasicParsing -TimeoutSec 2 | Out-Null
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CF-Pick.exe
+          generate_release_notes: true
+          draft: false

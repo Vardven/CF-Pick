@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CF 入口优选 · 测速台</title>
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%2322d3ee' stroke-width='3'/><circle cx='16' cy='16' r='4' fill='%23a78bfa'/></svg>">
+<style>
+*{box-sizing:border-box;-webkit-font-smoothing:antialiased}
+html,body{height:100%;margin:0}
+body{
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  background:#070a12;color:#e8ecf5;overflow:hidden;
+  background-image:
+    radial-gradient(900px 520px at 10% -12%, rgba(34,211,238,.14), transparent 62%),
+    radial-gradient(820px 520px at 92% -6%, rgba(167,139,250,.14), transparent 62%),
+    radial-gradient(760px 620px at 50% 122%, rgba(52,211,153,.07), transparent 62%);
+}
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px);
+  background-size:46px 46px;
+  -webkit-mask-image:radial-gradient(circle at 50% 0%,#000 0%,transparent 72%);
+          mask-image:radial-gradient(circle at 50% 0%,#000 0%,transparent 72%);
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.13);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.24);background-clip:padding-box;border:2px solid transparent}
+::-webkit-scrollbar-track{background:transparent}
+
+.app{position:relative;z-index:1;height:100vh;display:flex;flex-direction:column;padding:16px 20px 13px;gap:13px}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex:none}
+.brand{display:flex;align-items:center;gap:13px}
+.mark{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(145deg,rgba(34,211,238,.22),rgba(167,139,250,.22));
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 0 28px -8px rgba(34,211,238,.55), inset 0 1px 0 rgba(255,255,255,.14)}
+h1{margin:0;font-size:19px;letter-spacing:.3px;font-weight:650}
+h1 b{background:linear-gradient(92deg,#67e8f9,#a78bfa 60%,#f0abfc);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{margin:3px 0 0;font-size:11.5px;color:#7c869c;letter-spacing:.2px}
+.head-right{display:flex;align-items:center;gap:9px}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;font-size:12px;
+  color:#9aa5bb;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08)}
+.chip i{width:7px;height:7px;border-radius:50%;background:#64748b;display:block;box-shadow:0 0 0 3px rgba(100,116,139,.15)}
+.chip.run{color:#67e8f9;border-color:rgba(34,211,238,.32);background:rgba(34,211,238,.09)}
+.chip.run i{background:#22d3ee;box-shadow:0 0 0 3px rgba(34,211,238,.18);animation:pulse 1.4s infinite}
+.chip.ok{color:#6ee7b7;border-color:rgba(52,211,153,.3);background:rgba(52,211,153,.08)}
+.chip.ok i{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.16)}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}
+
+/* ---------- layout ---------- */
+main{flex:1;display:grid;grid-template-columns:330px minmax(0,1fr);gap:15px;min-height:0}
+.side{display:flex;flex-direction:column;gap:13px;min-height:0;overflow:auto;padding-right:3px}
+.content{display:flex;flex-direction:column;gap:13px;min-height:0}
+.card{background:linear-gradient(180deg,rgba(23,28,42,.88),rgba(13,17,27,.9));
+  border:1px solid rgba(255,255,255,.07);border-radius:16px;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  box-shadow:0 18px 40px -26px #000, inset 0 1px 0 rgba(255,255,255,.045)}
+
+/* ---------- side form ---------- */
+.sect{padding:15px 15px 16px}
+.sect h2{margin:0 0 12px;font-size:11px;font-weight:600;letter-spacing:1.3px;color:#6d7891;text-transform:uppercase}
+.field{margin-bottom:11px}
+.field:last-child{margin-bottom:0}
+label{display:block;font-size:11.5px;color:#8b95ab;margin-bottom:6px;letter-spacing:.2px}
+input[type=text],input[type=number],textarea{
+  width:100%;padding:9px 11px;border-radius:10px;font-size:13px;color:#e8ecf5;
+  background:rgba(8,11,19,.72);border:1px solid rgba(255,255,255,.09);outline:none;
+  font-family:inherit;transition:border-color .18s,box-shadow .18s,background .18s}
+input:focus,textarea:focus{border-color:rgba(34,211,238,.55);box-shadow:0 0 0 3px rgba(34,211,238,.1);background:rgba(8,11,19,.95)}
+input:disabled{opacity:.55}
+textarea{resize:vertical;min-height:118px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:1.65}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hint{font-size:11px;color:#616c82;line-height:1.6;margin:8px 0 0}
+.hint code{color:#8fa3c4;background:rgba(255,255,255,.05);padding:1px 5px;border-radius:4px;font-size:10.5px}
+
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;border-radius:11px;
+  background:rgba(8,11,19,.72);border:1px solid rgba(255,255,255,.08)}
+.seg button{appearance:none;border:0;background:transparent;color:#8b95ab;font-size:12px;padding:7px 0;
+  border-radius:8px;cursor:pointer;font-family:inherit;transition:.16s}
+.seg button:hover{color:#cfd8e8}
+.seg button.on{background:linear-gradient(180deg,rgba(34,211,238,.2),rgba(34,211,238,.1));
+  color:#67e8f9;box-shadow:inset 0 0 0 1px rgba(34,211,238,.35)}
+
+.slider{display:flex;align-items:center;gap:10px}
+input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:4px;border-radius:4px;outline:none;
+  background:linear-gradient(90deg,#22d3ee,#a78bfa);opacity:.85}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+  background:#e8ecf5;border:2px solid #0b1120;box-shadow:0 0 10px rgba(34,211,238,.7);cursor:pointer}
+.slider output{font-variant-numeric:tabular-nums;font-size:12.5px;color:#67e8f9;min-width:26px;text-align:right}
+
+.btn{appearance:none;border:0;font-family:inherit;cursor:pointer;border-radius:11px;font-size:13px;
+  transition:transform .12s,box-shadow .2s,filter .2s,background .2s}
+.btn:active{transform:translateY(1px) scale(.995)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none!important}
+.btn-primary{width:100%;padding:12px 0;font-weight:600;color:#031018;letter-spacing:.4px;
+  background:linear-gradient(96deg,#67e8f9,#a78bfa 96%);
+  box-shadow:0 12px 26px -14px rgba(34,211,238,.9), inset 0 1px 0 rgba(255,255,255,.45)}
+.btn-primary:hover:not(:disabled){filter:brightness(1.08);box-shadow:0 14px 30px -12px rgba(34,211,238,.95)}
+.btn-ghost{padding:10px 0;width:100%;color:#a9b4c9;background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.09);font-weight:500}
+.btn-ghost:hover:not(:disabled){background:rgba(255,255,255,.1);color:#e8ecf5}
+.btn-sm{padding:7px 12px;font-size:12px;color:#a9b4c9;background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.09);border-radius:9px;font-weight:500;white-space:nowrap}
+.btn-sm:hover{background:rgba(255,255,255,.1);color:#e8ecf5}
+.btn-sm.accent{color:#67e8f9;border-color:rgba(34,211,238,.3);background:rgba(34,211,238,.08)}
+.btn-sm.accent:hover{background:rgba(34,211,238,.15)}
+.stack{display:flex;flex-direction:column;gap:9px}
+
+details{border-radius:16px;overflow:hidden}
+details>summary{list-style:none;cursor:pointer;padding:14px 15px;font-size:11.5px;letter-spacing:1.1px;
+  color:#6d7891;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}
+details>summary::-webkit-details-marker{display:none}
+details>summary::after{content:"";width:6px;height:6px;border-right:1.6px solid #5d6880;border-bottom:1.6px solid #5d6880;
+  transform:rotate(45deg);transition:.22s;margin-right:3px}
+details[open]>summary::after{transform:rotate(-135deg)}
+details>summary:hover{color:#9aa5bb}
+.drawer{padding:0 15px 15px;border-top:1px solid rgba(255,255,255,.055);padding-top:13px}
+
+/* ---------- kpi ---------- */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;flex:none}
+.kpi{padding:13px 15px;position:relative;overflow:hidden}
+.kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
+  background:linear-gradient(180deg,#22d3ee,#a78bfa);opacity:.85}
+.kpi span{display:block;font-size:10.5px;letter-spacing:.9px;color:#6d7891;text-transform:uppercase;margin-bottom:6px}
+.kpi b{font-size:25px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.4px;line-height:1}
+.kpi b em{font-style:normal;font-size:12px;color:#7c869c;margin-left:3px;font-weight:500}
+.kpi.c1 b{color:#67e8f9}.kpi.c2 b{color:#c4b5fd}.kpi.c3 b{color:#6ee7b7}.kpi.c4 b{color:#fcd34d}
+
+/* ---------- progress ---------- */
+.prog{padding:14px 16px 15px;flex:none}
+.prog-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;gap:12px}
+.prog-top .t{font-size:12.5px;color:#9aa5bb}
+.prog-top .t b{color:#e8ecf5;font-variant-numeric:tabular-nums;font-weight:600}
+.prog-top .pct{font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;
+  background:linear-gradient(90deg,#67e8f9,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
+.track{height:7px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;position:relative}
+.fill{height:100%;width:0;border-radius:99px;position:relative;
+  background:linear-gradient(90deg,#22d3ee,#818cf8 55%,#a78bfa);
+  box-shadow:0 0 16px rgba(34,211,238,.55);transition:width .45s cubic-bezier(.4,0,.2,1)}
+.fill::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
+  animation:shine 1.5s linear infinite;opacity:.65}
+@keyframes shine{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.prog-meta{display:flex;gap:16px;margin-top:9px;font-size:11.5px;color:#616c82;flex-wrap:wrap}
+.prog-meta b{color:#9aa5bb;font-weight:500;font-variant-numeric:tabular-nums}
+
+/* ---------- board ---------- */
+.board{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.board-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 12px;flex:none;
+  border-bottom:1px solid rgba(255,255,255,.055)}
+.board-head .l{display:flex;align-items:center;gap:10px}
+.board-head h3{margin:0;font-size:14px;font-weight:600;letter-spacing:.2px}
+.board-head .n{font-size:11px;color:#6d7891;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,.05)}
+.board-head .r{display:flex;gap:7px}
+.table-wrap{flex:1;overflow:auto;min-height:0}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.8px}
+thead th{position:sticky;top:0;z-index:2;text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;
+  letter-spacing:.9px;text-transform:uppercase;color:#5f6a80;
+  background:rgba(15,19,30,.97);backdrop-filter:blur(6px);border-bottom:1px solid rgba(255,255,255,.06);white-space:nowrap}
+thead th.num{text-align:right}
+tbody tr{transition:background .14s}
+tbody tr:hover{background:rgba(255,255,255,.035)}
+tbody td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.038);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+.rk{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;font-size:11.5px;font-weight:700;
+  font-variant-numeric:tabular-nums;color:#7c869c;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.07)}
+.rk.g1{color:#231a00;background:linear-gradient(145deg,#fde68a,#f59e0b);border-color:rgba(255,255,255,.4);
+  box-shadow:0 0 16px -3px rgba(245,158,11,.85)}
+.rk.g2{color:#131a22;background:linear-gradient(145deg,#e2e8f0,#94a3b8);border-color:rgba(255,255,255,.35);
+  box-shadow:0 0 14px -4px rgba(148,163,184,.8)}
+.rk.g3{color:#22120a;background:linear-gradient(145deg,#fcd9b6,#c2703a);border-color:rgba(255,255,255,.28);
+  box-shadow:0 0 14px -4px rgba(194,112,58,.75)}
+.dom{font-weight:550;color:#e8ecf5;letter-spacing:.1px;word-break:break-all;line-height:1.35}
+.ip{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;color:#5f6a80;margin-top:2px;
+  line-height:1.3;word-break:break-all}
+.pill{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:650;letter-spacing:.4px;
+  font-family:ui-monospace,Consolas,monospace}
+.pill.v6{color:#a5f3fc;background:rgba(34,211,238,.13);border:1px solid rgba(34,211,238,.28)}
+.pill.v4{color:#c4b5fd;background:rgba(167,139,250,.13);border:1px solid rgba(167,139,250,.28)}
+.lat{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lat b{font-size:15px;font-weight:650;color:#e8ecf5;letter-spacing:-.2px}
+.lat span{font-size:10.5px;color:#5f6a80;margin-left:2px}
+.lat.fast b{color:#6ee7b7}
+.lat.mid b{color:#fcd34d}
+.lat.slow b{color:#fca5a5}
+td.barcell{width:132px;padding-right:16px}
+.bar{height:5px;border-radius:99px;background:rgba(255,255,255,.055);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+.bar i.fast{background:linear-gradient(90deg,#34d399,#22d3ee)}
+.bar i.mid{background:linear-gradient(90deg,#fbbf24,#f59e0b)}
+.bar i.slow{background:linear-gradient(90deg,#f87171,#fb7185)}
+.dots{font-family:ui-monospace,Consolas,monospace;font-size:9px;letter-spacing:1.5px;color:#34d399;white-space:nowrap}
+.dots.bad{color:#f87171}
+.st{display:inline-block;padding:3px 8px;border-radius:7px;font-size:10.5px;font-weight:600;white-space:nowrap}
+.st.ok{color:#6ee7b7;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.25)}
+.st.warn{color:#fcd34d;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.25)}
+.st.bad{color:#fca5a5;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25)}
+.empty{padding:60px 20px;text-align:center;color:#5f6a80;font-size:13px}
+.empty .ico{font-size:32px;opacity:.45;margin-bottom:10px}
+.empty p{margin:6px 0 0;font-size:11.5px;color:#4d576b}
+tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
+@keyframes rowin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+/* ---------- toast ---------- */
+#toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+  padding:10px 18px;border-radius:11px;font-size:12.5px;color:#e8ecf5;
+  background:rgba(20,26,40,.96);border:1px solid rgba(34,211,238,.3);
+  box-shadow:0 16px 40px -18px #000,0 0 0 1px rgba(255,255,255,.03);transition:.28s;z-index:50}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media(max-width:1080px){
+  main{grid-template-columns:1fr;overflow:auto}
+  .side{overflow:visible}
+  .board{min-height:420px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="mark">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M3 15.5c0-3.3 2.7-6 6-6 1 0 1.9.2 2.7.7A4.6 4.6 0 0 1 20 12.6c1.2.3 2 1.4 2 2.6 0 1.6-1.3 2.8-2.9 2.8H5.9A2.9 2.9 0 0 1 3 15.5Z" stroke="#67e8f9" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="m10.5 12.5 2 2 3.5-3.8" stroke="#a78bfa" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <h1>CF 入口优选 · <b>测速台</b></h1>
+        <p class="sub">一键并发测速 · 真实回源校验 · TOP 20 榜单</p>
+      </div>
+    </div>
+    <div class="head-right">
+      <span class="chip" id="chip"><i></i><span id="chipText">就绪</span></span>
+      <button class="btn-sm" id="btnExit">退出</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="side">
+      <section class="card sect">
+        <h2>目标</h2>
+        <div class="field">
+          <label>SNI / Host（你的 CDN 域名）</label>
+          <input type="text" id="sni" spellcheck="false" placeholder="cdn-test.example.com">
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>端口</label>
+            <input type="number" id="port" value="443" min="1" max="65535">
+          </div>
+          <div class="field">
+            <label>每项测几次</label>
+            <input type="number" id="tries" value="2" min="1" max="10">
+          </div>
+        </div>
+        <div class="field">
+          <label>地址族</label>
+          <div class="seg" id="fam">
+            <button data-v="auto" class="on">自动</button>
+            <button data-v="v6">仅 IPv6</button>
+            <button data-v="v4">仅 IPv4</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>并发数</label>
+          <div class="slider">
+            <input type="range" id="conc" min="4" max="64" step="2" value="32">
+            <output id="concOut">32</output>
+          </div>
+        </div>
+        <div class="stack" style="margin-top:14px">
+          <button class="btn btn-primary" id="btnRun">开 始 测 速</button>
+          <button class="btn btn-ghost" id="btnStop" disabled>停止</button>
+        </div>
+        <p class="hint">测速时请先退出代理软件（含 TUN），否则结果不可信。</p>
+      </section>
+
+      <details class="card" id="drawer">
+        <summary>候选入口 <span class="n" id="candCount" style="font-size:10.5px;color:#5f6a80">—</span></summary>
+        <div class="drawer">
+          <textarea id="cands" spellcheck="false" placeholder="一行一个域名或 IP"></textarea>
+          <div class="stack" style="margin-top:9px">
+            <button class="btn-sm accent" id="btnSave">保存并应用</button>
+          </div>
+        </div>
+      </details>
+    </aside>
+
+    <section class="content">
+      <div class="kpis">
+        <div class="card kpi c1"><span>可用入口</span><b id="kOk">0<em>个</em></b></div>
+        <div class="card kpi c2"><span>最快延迟</span><b id="kFast">—</b></div>
+        <div class="card kpi c3"><span>可用均值</span><b id="kAvg">—</b></div>
+        <div class="card kpi c4"><span>已测 / 总数</span><b id="kDone">0<em>/0</em></b></div>
+      </div>
+
+      <div class="card prog">
+        <div class="prog-top">
+          <div class="t" id="progText">等待开始</div>
+          <div class="pct" id="progPct">0%</div>
+        </div>
+        <div class="track"><div class="fill" id="fill"></div></div>
+        <div class="prog-meta">
+          <div>用时 <b id="mTime">0.0s</b></div>
+          <div>被拦截 <b id="mBlock">0</b></div>
+          <div>回源异常 <b id="mOrigin">0</b></div>
+          <div>非CF节点 <b id="mNonCf">0</b></div>
+          <div>不通 <b id="mDead">0</b></div>
+        </div>
+      </div>
+
+      <div class="card board">
+        <div class="board-head">
+          <div class="l">
+            <h3>TOP 20 榜单</h3>
+            <span class="n" id="boardNote">实时</span>
+          </div>
+          <div class="r">
+            <button class="btn-sm accent" id="btnCopy">复制 TOP20</button>
+            <button class="btn-sm" id="btnCsv">导出 CSV</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:44px">#</th>
+                <th>入口 / 解析 IP</th>
+                <th style="width:60px">族</th>
+                <th class="num" style="width:86px">延迟</th>
+                <th style="width:132px">对比</th>
+                <th style="width:52px">成功</th>
+                <th style="width:96px">状态</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr><td colspan="7">
+                <div class="empty">
+                  <div class="ico">◎</div>
+                  还没有数据
+                  <p>点击左侧「开始测速」，榜单会随进度实时刷新</p>
+                </div>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const S = { running:false, done:0, total:0, since:0, t0:0, results:[], usable:[], family:"auto", poll:null };
+const MAXROWS = 20;
+const DEMO = [{"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:8390::395e:9f27", "ms": 301, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 304, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 314, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 316, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:91b4::aaa5:d6c1", "ms": 317, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 320, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:9b08::93e7:7adb", "ms": 322, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:99e6::1f00:5835", "ms": 323, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:99e4::4f5e:9096", "ms": 326, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9a68::1252:a6df", "ms": 327, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 329, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:91b1::c25a:fef2", "ms": 331, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 336, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9c67::76fc:1039", "ms": 358, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "bbs.alipansou.com", "family": "v4", "ip": "104.25.244.197", "ms": 485, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "eii.at", "family": "v4", "ip": "104.25.244.197", "ms": 488, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "mokeedev.com", "family": "v4", "ip": "172.66.134.83", "ms": 492, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf-ip-site.vov.moe", "family": "v4", "ip": "172.66.216.230", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "224322.xyz", "family": "v4", "ip": "104.25.245.13", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.jwcmdr.top", "family": "v4", "ip": "104.25.255.40", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "skk.moe", "family": "v4", "ip": "172.66.132.196", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.mfyx.cn", "family": "v4", "ip": "104.25.240.121", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.5h.com", "family": "v4", "ip": "172.66.137.209", "ms": 497, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.1o.ee", "family": "v4", "ip": "172.66.128.235", "ms": 499, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}];
+
+function toast(msg){
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>el.classList.remove("on"), 1900);
+}
+function fmtInt(n){ return Number(n||0).toLocaleString("en-US"); }
+
+async function api(path, body){
+  const opt = body === undefined ? {cache:"no-store"} :
+    {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)};
+  const r = await fetch(path, opt);
+  if(!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+/* ---------- boot ---------- */
+function applyDemo(){
+  $("#sni").value = "cdn.example.com";
+  $("#candCount").textContent = "426 项";
+  $("#cands").value = DEMO.map(r=>r.domain).join("\n");
+  S.results = DEMO.slice();
+  S.done = 1351; S.total = 1351; S.t0 = Date.now() - 75000;
+  render();
+  $("#fill").style.width = "100%";
+  $("#progPct").textContent = "100%";
+  $("#progText").innerHTML = "演示数据 · 候选 <b>426</b> 个";
+  $("#chip").className = "chip ok";
+  $("#chipText").textContent = "演示";
+  $("#boardNote").textContent = "演示榜单";
+}
+
+async function boot(){
+  if(location.protocol === "file:"){ applyDemo(); return; }
+  try{
+    const d = await api("/api/init");
+    $("#sni").value = d.config.sni || "";
+    $("#port").value = d.config.port || 443;
+    $("#tries").value = d.config.tries || 2;
+    $("#conc").value = d.config.concurrency || 32;
+    $("#concOut").textContent = $("#conc").value;
+    setFamily(d.config.family || "auto", false);
+    $("#cands").value = (d.candidates || []).join("\n");
+    S.candsSaved = $("#cands").value;
+    $("#candCount").textContent = (d.candidates || []).length + " 项";
+    if(d.results && d.results.length){
+      S.results = d.results;
+      S.done = d.done; S.total = d.total; S.since = d.results.length;
+      S.t0 = Date.now() - (d.elapsed||0)*1000;
+      render();
+      $("#progText").textContent = "上次测试结果（" + d.finished + "）";
+    }
+    if(d.running) attachRunning(d);
+  }catch(e){ toast("初始化失败：" + e.message); }
+}
+
+function attachRunning(d){
+  S.running = true; S.total = d.total; S.done = d.done;
+  S.t0 = Date.now() - (d.elapsed||0)*1000;
+  lockUI(true);
+  loop();
+}
+
+/* ---------- family ---------- */
+function setFamily(v, save){
+  S.family = v;
+  document.querySelectorAll("#fam button").forEach(b=>b.classList.toggle("on", b.dataset.v===v));
+  if(save) toast(v==="auto" ? "地址族：自动" : v==="v6" ? "地址族：仅 IPv6" : "地址族：仅 IPv4");
+}
+document.querySelectorAll("#fam button").forEach(b=>{
+  b.onclick = (e)=>{ e.preventDefault(); setFamily(b.dataset.v, true); };
+});
+$("#conc").oninput = e => $("#concOut").textContent = e.target.value;
+
+/* ---------- run ---------- */
+function lockUI(run){
+  ["sni","port","tries","conc","btnSave","btnRun"].forEach(id=>{
+    $("#"+id).disabled = run;
+  });
+  $("#btnStop").disabled = !run;
+  document.querySelectorAll("#fam button").forEach(b=>b.disabled = run);
+  const chip = $("#chip"), txt = $("#chipText");
+  chip.className = "chip" + (run ? " run" : "");
+  txt.textContent = run ? "测速中" : "就绪";
+}
+
+async function start(){
+  const sni = $("#sni").value.trim();
+  if(!sni){ toast("请先填 SNI / Host"); return; }
+  const port = parseInt($("#port").value)||443;
+  const tries = Math.min(10, Math.max(1, parseInt($("#tries").value)||2));
+  const conc  = Math.min(64, Math.max(4, parseInt($("#conc").value)||32));
+
+  // 候选列表改过就顺手存一下，真正做到一键
+  const text = $("#cands").value.trim();
+  if(text !== (S.candsSaved || "")){
+    try{
+      const sv = await api("/api/candidates", {text});
+      if(!sv.count){ toast("候选列表为空，请先粘贴入口"); return; }
+      S.candsSaved = text;
+      $("#candCount").textContent = sv.count + " 项";
+    }catch(e){ toast("保存候选失败：" + e.message); return; }
+  }
+
+  S.results = []; S.since = 0; S.done = 0; S.total = 0; S.t0 = Date.now(); S.phase = "resolve";
+  render();
+  try{
+    const d = await api("/api/run", {sni, port, tries, concurrency:conc, family:S.family});
+    if(d.error){ toast(d.error); return; }
+    S.total = d.total; S.running = true;
+    lockUI(true);
+    loop();
+  }catch(e){ toast("启动失败：" + e.message); }
+}
+
+async function stop(){
+  try{ await api("/api/stop", {}); }catch(e){}
+  toast("已停止");
+}
+
+function loop(){
+  clearTimeout(S.poll);
+  S.poll = setTimeout(tick, 320);
+}
+
+async function tick(){
+  let d;
+  try{ d = await api("/api/progress?since=" + S.since); }
+  catch(e){ S.poll = setTimeout(tick, 900); return; }
+
+  if(d.entries && d.entries.length){
+    d.entries.forEach(e=>S.results.push(e));
+    S.since = d.since;
+  }
+  S.done = d.done; S.total = d.total; S.phase = d.phase;
+  render();
+
+  if(d.running){ S.poll = setTimeout(tick, 320); }
+  else{
+    S.running = false;
+    lockUI(false);
+    $("#chip").className = "chip ok";
+    $("#chipText").textContent = "完成";
+    $("#progText").innerHTML = "测试完成 · 共 <b>" + S.total + "</b> 个入口";
+    $("#boardNote").textContent = "最终榜单";
+    toast("测速完成，共 " + S.total + " 个入口");
+  }
+}
+
+/* ---------- render ---------- */
+function render(){
+  const usable = S.results.filter(r=>r.usable).sort((a,b)=>a.ms-b.ms);
+  const blocked = S.results.filter(r=>r.status==="被CF拦截").length;
+  const origin  = S.results.filter(r=>r.status==="回源异常").length;
+  const noncf   = S.results.filter(r=>r.status==="非CF节点").length;
+  const dead    = S.results.filter(r=>!r.usable && !["被CF拦截","回源异常","非CF节点"].includes(r.status)).length;
+
+  $("#kOk").innerHTML = usable.length + "<em>个</em>";
+  $("#kFast").innerHTML = usable.length ? (usable[0].ms + "<em>ms</em>") : "—";
+  $("#kAvg").innerHTML = usable.length
+    ? (Math.round(usable.reduce((s,r)=>s+r.ms,0)/usable.length) + "<em>ms</em>") : "—";
+  $("#kDone").innerHTML = S.done + "<em>/" + S.total + "</em>";
+  $("#mBlock").textContent = blocked;
+  $("#mOrigin").textContent = origin;
+  $("#mNonCf").textContent = noncf;
+  $("#mDead").textContent = dead;
+
+  const pct = S.total ? Math.min(100, S.done / S.total * 100) : 0;
+  $("#fill").style.width = pct.toFixed(1) + "%";
+  $("#progPct").textContent = Math.round(pct) + "%";
+  if(S.running){
+    $("#progText").innerHTML = S.phase === "resolve"
+      ? "正在解析域名 · 已完成 <b>" + S.done + "</b> / " + S.total
+      : "正在测速 · 已完成 <b>" + S.done + "</b> / " + S.total;
+  }
+  $("#mTime").textContent = ((Date.now() - S.t0)/1000).toFixed(1) + "s";
+
+  const top = usable.slice(0, MAXROWS);
+  const tbody = $("#tbody");
+  if(!top.length){
+    if(!S.running){
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="ico">◎</div>还没有数据<p>点击左侧「开始测速」，榜单会随进度实时刷新</p></div></td></tr>';
+    }
+    return;
+  }
+
+  const best = top[0].ms;
+  const worst = top[top.length-1].ms || 1;
+  const rows = top.map((r,i)=>{
+    const cls = r.ms <= 420 ? "fast" : r.ms <= 800 ? "mid" : "slow";
+    const rankCls = i===0 ? "g1" : i===1 ? "g2" : i===2 ? "g3" : "";
+    const w = Math.max(6, Math.round(best / r.ms * 100));
+    const dots = "●".repeat(r.ok) + "○".repeat(Math.max(0, r.tries - r.ok));
+    const stCls = r.status === "可用" ? "ok" : "warn";
+    return '<tr class="fresh" title="点击复制 ' + r.domain + '">' +
+      '<td><div class="rk ' + rankCls + '">' + (i+1) + '</div></td>' +
+      '<td><div class="dom">' + r.domain + '</div><div class="ip">' + r.ip + '</div></td>' +
+      '<td><span class="pill ' + (r.family==="v6"?"v6":"v4") + '">' + (r.family==="v6"?"IPv6":"IPv4") + '</span></td>' +
+      '<td class="lat ' + cls + '"><b>' + r.ms + '</b><span>ms</span></td>' +
+      '<td class="barcell"><div class="bar"><i class="' + cls + '" style="width:' + w + '%"></i></div></td>' +
+      '<td><span class="dots' + (r.ok < r.tries ? ' bad' : '') + '">' + dots + '</span></td>' +
+      '<td><span class="st ' + stCls + '">' + r.status + '</span></td>' +
+      '</tr>';
+  });
+  tbody.innerHTML = rows.join("");
+  $("#boardNote").textContent = S.running ? "实时" : "最终榜单";
+}
+
+$("#tbody").addEventListener("click", async (e)=>{
+  const tr = e.target.closest("tr");
+  if(!tr) return;
+  const dom = tr.querySelector(".dom");
+  if(!dom) return;
+  try{ await navigator.clipboard.writeText(dom.textContent); toast("已复制 " + dom.textContent); }
+  catch(_){ toast("复制失败，请手动选择"); }
+});
+
+$("#btnCopy").onclick = async ()=>{
+  const top = S.results.filter(r=>r.usable).sort((a,b)=>a.ms-b.ms).slice(0,MAXROWS);
+  if(!top.length){ toast("还没有可用结果"); return; }
+  const txt = top.map(r=>r.domain).join("\n");
+  try{ await navigator.clipboard.writeText(txt); toast("已复制 " + top.length + " 个入口"); }
+  catch(_){ toast("复制失败"); }
+};
+
+$("#btnCsv").onclick = ()=>{ window.location.href = "/api/export.csv"; };
+
+$("#btnRun").onclick = start;
+$("#btnStop").onclick = stop;
+
+$("#btnSave").onclick = async ()=>{
+  const txt = $("#cands").value;
+  try{
+    const d = await api("/api/candidates", {text: txt});
+    S.candsSaved = txt;
+    $("#candCount").textContent = d.count + " 项";
+    toast("已保存 " + d.count + " 个候选");
+  }catch(e){ toast("保存失败：" + e.message); }
+};
+
+$("#btnExit").onclick = async ()=>{
+  if(!confirm("退出测速台？")) return;
+  try{ await api("/api/shutdown", {}); }catch(e){}
+  document.body.innerHTML = '<div style="height:100vh;display:grid;place-items:center;color:#5f6a80;font-size:13px">已退出，可以关闭此页面</div>';
+};
+
+document.addEventListener("keydown", e=>{
+  if((e.ctrlKey||e.metaKey) && e.key === "Enter"){ e.preventDefault(); if(!S.running) start(); }
+});
+
+boot();
+setInterval(()=>{ if(S.running) $("#mTime").textContent = ((Date.now()-S.t0)/1000).toFixed(1)+"s"; }, 200);
+</script>
+</body>
+</html>
