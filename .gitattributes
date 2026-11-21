@@ -2,3 +2,7 @@
 *.cmd text eol=crlf
 *.ico binary
 *.png binary
+
+# 语言统计只按 Python 算（ui.html 是单文件界面，别让它在 GitHub 上显示成 HTML 项目）
+ui.html linguist-detectable=false
+cf-domains.txt linguist-detectable=false
