@@ -732,6 +732,30 @@ def csv_bytes() -> bytes:
     return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
+# ---- 界面「最小化 / 恢复」状态 -------------------------------------------------
+# 网页点「退出 → 最小化到托盘」后，页面只在最上层盖一层遮罩、DOM 全部保留。
+# 托盘双击 / 小窗「打开界面」/ 再双击一次 exe，都会把 reopen 计数 +1；
+# 页面心跳读到计数变了就把遮罩撤掉，测速台原样回来（不刷新、不丢已测出的结果）。
+_UI = {"minimized": False, "reopen": 0}
+_UI_LOCK = threading.Lock()
+
+
+def ui_minimize() -> None:
+    with _UI_LOCK:
+        _UI["minimized"] = True
+
+
+def ui_reopen() -> None:
+    with _UI_LOCK:
+        _UI["minimized"] = False
+        _UI["reopen"] += 1
+
+
+def ui_state() -> dict:
+    with _UI_LOCK:
+        return dict(_UI)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = APP + "/" + VERSION
 
@@ -778,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, "ok", "text/plain")
         if p == "/api/beat":
             page_touch()
-            return self._json({"ok": True})
+            return self._json({"ok": True, "ui": ui_state()})
         if p == "/api/check-env":
             return self._json(env_check())
         if p == "/api/init":
@@ -822,6 +846,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"mode": mode})
             if mode == "minimize":
                 log("exit -> minimize to tray")
+                ui_minimize()
                 tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
             else:
                 log("exit -> quit")
@@ -853,6 +878,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "SNI / Host 不能为空"})
             save_cfg(cfg)
             return self._json(start_run(cfg))
+        if p == "/api/reopen":
+            # 第二次双击 exe 时，由第二个进程调这里，让已跑着的实例把界面叫回来
+            ui_reopen()
+            log("reopen requested by second instance")
+            return self._json({"ok": True, "ui": ui_state()})
         if p == "/api/stop":
             STATE.stop.set()
             return self._json({"stopped": True})
@@ -879,6 +909,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"mode": mode})
             if mode == "minimize":
                 log("exit -> minimize to tray")
+                ui_minimize()
                 tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
             else:
                 log("exit -> quit")
@@ -1574,7 +1605,12 @@ def open_tab(port: int) -> None:
 
 
 def open_ui(port: int) -> bool:
-    """状态小窗 / 托盘按钮用：能复用就复用，否则开一个新标签页。"""
+    """状态小窗 / 托盘按钮 / 再次双击 exe 都走这里。
+
+    先发「恢复界面」信号：页面若正停在「已最小化到托盘」的遮罩上，
+    心跳读到就立刻撤掉遮罩，测速台原样回来（不刷新、已测结果还在）。
+    """
+    ui_reopen()
     if os.environ.get("CF_PICK_NO_BROWSER") == "1":
         return False
     if focus_existing_page():
@@ -1618,6 +1654,22 @@ def already_running(port: int) -> bool:
         return False
 
 
+def notify_reopen(port: int) -> bool:
+    """跨进程叫回界面。
+
+    _UI 是进程内状态，第二个进程自己改没用；必须让已经在跑的那个实例
+    （托盘图标、状态小窗都挂在那里）把 reopen 计数 +1，页面才会撤掉遮罩。
+    """
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:%d/api/reopen" % port,
+                                     data=b"{}", method="POST")
+        with urllib.request.urlopen(req, timeout=1.2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def main():
     t0 = time.time()
     first = is_first_instance()
@@ -1631,7 +1683,8 @@ def main():
                 if already_running(p):
                     log("second instance -> reuse 127.0.0.1:%d" % p)
                     splash_close()
-                    open_ui(p)
+                    notify_reopen(p)      # 先让老实例放行界面（它才有 _UI 和托盘）
+                    open_ui(p)            # 再把已有窗口提到前台
                     return
             time.sleep(0.25)
         log("second instance: 未找到已在运行的实例，改为自行启动")

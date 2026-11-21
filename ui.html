@@ -243,6 +243,17 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
   background:rgba(5,8,14,.66);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
 .mask.on{display:flex;animation:maskin .18s ease both}
 @keyframes maskin{from{opacity:0}to{opacity:1}}
+
+/* ---------- 「已最小化到托盘」遮罩（只盖一层，DOM 保留，随时能原样恢复） ---------- */
+#goneMask{z-index:70;backdrop-filter:none;-webkit-backdrop-filter:none;
+  background:radial-gradient(900px 560px at 50% 8%,rgba(34,211,238,.07),transparent 62%),#080c14}
+.gone{max-width:400px;text-align:center;padding:0 26px;animation:dlgin .26s cubic-bezier(.2,.8,.3,1) both}
+.gone-dot{width:9px;height:9px;border-radius:50%;background:#22d3ee;margin:0 auto 20px;
+  box-shadow:0 0 0 5px rgba(34,211,238,.13);animation:pulse 2.4s ease-in-out infinite}
+.gone h3{font-size:15.5px;color:#e8ecf4;font-weight:600;margin:0 0 12px;letter-spacing:.2px}
+.gone p{font-size:12.2px;line-height:1.9;color:#8b95ab;margin:0}
+.gone .btn-sm{margin-top:20px}
+.gone .gone-tip{margin-top:16px;font-size:11px;color:#5b6579}
 .dialog{width:min(452px,92vw);padding:22px 22px 18px;border-radius:16px;position:relative;
   background:linear-gradient(180deg,#161c28,#101520);border:1px solid rgba(240,169,122,.26);
   box-shadow:0 30px 70px -24px #000,inset 0 1px 0 rgba(255,255,255,.06);
@@ -426,12 +437,24 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
   </div>
 </div>
 
+<!-- 点「退出 → 最小化到托盘」后盖这层：DOM 全部保留，托盘双击即原样恢复，已测结果不丢 -->
+<div class="mask" id="goneMask">
+  <div class="gone">
+    <div class="gone-dot"></div>
+    <h3>已最小化到系统托盘</h3>
+    <p>程序还在后台运行，刚才测出来的结果也都还在。<br>双击任务栏右下角的托盘图标，或再双击一次 CF-Pick.exe，都能回到这个界面。</p>
+    <button class="btn-sm accent" id="goneBack">重新打开测速台</button>
+    <p class="gone-tip">想彻底关掉：右键托盘图标 → 彻底退出</p>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
-const S = { running:false, done:0, total:0, since:0, t0:0, results:[], usable:[], family:"auto", poll:null };
+const S = { running:false, done:0, total:0, since:0, t0:0, results:[], usable:[], family:"auto", poll:null,
+            minimized:false, goneQuit:false, reopen:0 };
 const MAXROWS = 20;
 const DEMO = [{"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:8390::395e:9f27", "ms": 301, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 304, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 314, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 316, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:91b4::aaa5:d6c1", "ms": 317, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 320, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:9b08::93e7:7adb", "ms": 322, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:99e6::1f00:5835", "ms": 323, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:99e4::4f5e:9096", "ms": 326, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9a68::1252:a6df", "ms": 327, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 329, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:91b1::c25a:fef2", "ms": 331, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 336, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9c67::76fc:1039", "ms": 358, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "bbs.alipansou.com", "family": "v4", "ip": "104.25.244.197", "ms": 485, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "eii.at", "family": "v4", "ip": "104.25.244.197", "ms": 488, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "mokeedev.com", "family": "v4", "ip": "172.66.134.83", "ms": 492, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf-ip-site.vov.moe", "family": "v4", "ip": "172.66.216.230", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "224322.xyz", "family": "v4", "ip": "104.25.245.13", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.jwcmdr.top", "family": "v4", "ip": "104.25.255.40", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "skk.moe", "family": "v4", "ip": "172.66.132.196", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.mfyx.cn", "family": "v4", "ip": "104.25.240.121", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.5h.com", "family": "v4", "ip": "172.66.137.209", "ms": 497, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.1o.ee", "family": "v4", "ip": "172.66.128.235", "ms": 499, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}];
 
@@ -453,7 +476,7 @@ async function api(path, body){
 }
 
 /* ---------- 连接状态：心跳探测本机服务是否还活着 ---------- */
-const CONN = {ok:false, seen:false, timer:null};
+const CONN = {ok:false, seen:false, timer:null, delay:2500};
 let CHIP = "off";                       // off | ok | run | done
 
 function setChip(state){
@@ -488,7 +511,7 @@ function applyConn(){
 }
 
 async function beat(){
-  let ok = false;
+  let ok = false, ui = null;
   try{
     const ac = new AbortController();
     const tm = setTimeout(()=>ac.abort(), 1600);
@@ -496,7 +519,18 @@ async function beat(){
     clearTimeout(tm);
     const d = r.ok ? await r.json() : null;
     ok = !!(d && d.ok);
+    ui = d && d.ui;
   }catch(e){ ok = false; }
+
+  // 托盘双击 / 再双击一次 exe 时，后端会把 reopen 计数 +1：撤掉「已最小化」遮罩
+  if(ui && typeof ui.reopen === "number" && ui.reopen !== S.reopen){
+    S.reopen = ui.reopen;
+    if(!ui.minimized) restoreUI();
+  }
+
+  if(!ok && S.minimized && !S.goneQuit){   // 后台真被退掉了，遮罩文案跟着改，别骗人
+    showGone(true);
+  }
 
   const first = !CONN.seen;
   if(ok === CONN.ok && !first) return;
@@ -505,10 +539,50 @@ async function beat(){
   if(!first) toast(ok ? "已重新连上测速台" : "与测速台断开，程序可能已退出");
 }
 
+function scheduleBeat(){
+  clearTimeout(CONN.timer);
+  if(S.goneQuit) return;                 // 已经彻底退出：别再心跳，否则会骗到下次启动「页面还开着」
+  CONN.timer = setTimeout(async ()=>{
+    await beat();
+    scheduleBeat();
+  }, CONN.delay);
+}
+
+/* 最小化到托盘时把心跳加快，托盘信号才能秒到 */
+function setBeatDelay(){
+  const d = S.minimized ? 700 : 2500;
+  if(d !== CONN.delay){ CONN.delay = d; scheduleBeat(); }
+}
+
 function startBeat(){
-  clearInterval(CONN.timer);
-  CONN.timer = setInterval(beat, 2500);
+  CONN.delay = 2500;
   beat();
+  scheduleBeat();
+}
+
+/* ---------- 最小化到托盘 / 彻底退出：只盖一层遮罩，页面 DOM 保留 ---------- */
+function showGone(quit){
+  const box = $("#goneMask");
+  if(quit && !S.goneQuit){
+    S.goneQuit = true;
+    // 改掉标题：这个页面成了「墓碑页」，别再让下次启动把它当成测速台复用
+    document.title = "CF-Pick · 已退出";
+    box.innerHTML = '<div class="gone"><div class="gone-dot" style="background:#5b6579;box-shadow:0 0 0 5px rgba(91,101,121,.16)"></div>'
+      + '<h3>已彻底退出</h3>'
+      + '<p>本地测速服务已经关掉了，这个页面可以关掉。<br>想再用的话，双击 CF-Pick.exe 重新启动。</p></div>';
+  }
+  S.minimized = !quit;
+  box.classList.add("on");
+  setBeatDelay();
+}
+
+function restoreUI(){
+  if(!S.minimized) return;
+  S.minimized = false;
+  $("#goneMask").classList.remove("on");
+  $("#btnExit").disabled = false;
+  setBeatDelay();
+  toast("已回到测速台");
 }
 
 /* ---------- boot ---------- */
@@ -800,11 +874,11 @@ $("#btnExit").onclick = async ()=>{
   $("#btnExit").disabled = true;
   let mode = "exit";
   try{ const r = await api("/api/exit", {}); mode = (r && r.mode) || "exit"; }catch(e){}
-  const msg = mode === "minimize"
-    ? "已最小化到系统托盘<br><span style='color:#8b93a7'>双击托盘图标可重新打开界面，右键可彻底退出</span>"
-    : "已彻底退出，可以关闭此页面";
-  document.body.innerHTML = '<div style="height:100vh;display:grid;place-items:center;color:#5f6a80;font-size:13px;text-align:center;line-height:1.9">'+msg+'</div>';
+  // 只盖一层遮罩，页面 DOM 留着 —— 托盘双击 / 再双击 exe 能原样恢复，已测结果也不丢
+  showGone(mode !== "minimize");
 };
+
+$("#goneBack").onclick = ()=> restoreUI();
 
 document.addEventListener("keydown", e=>{
   if((e.ctrlKey||e.metaKey) && e.key === "Enter"){ e.preventDefault(); if(!S.running) start(); }
