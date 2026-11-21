@@ -749,6 +749,8 @@ if HAS_SHELL:
     _u.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
     _u.DestroyMenu.argtypes = [wintypes.HMENU]
     _u.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _u.DestroyWindow.argtypes = [wintypes.HWND]
+    _u.PostQuitMessage.argtypes = [ctypes.c_int]
     _u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                 ctypes.c_int, ctypes.c_int, wintypes.UINT]
     _u.GetDC.restype = wintypes.HDC
@@ -863,20 +865,113 @@ def quit_now() -> None:
     threading.Timer(0.2, lambda: os._exit(0)).start()
 
 
+_ASK = {"result": None}
+ID_MIN, ID_BYE = 201, 202
+
+
+def _ask_paint(hwnd) -> None:
+    ps = _PAINTSTRUCT()
+    hdc = _u.BeginPaint(hwnd, ctypes.byref(ps))
+    try:
+        rc = wintypes.RECT()
+        _u.GetClientRect(hwnd, ctypes.byref(rc))
+        _u.FillRect(hdc, ctypes.byref(rc), _SHELL["brush"])
+        _g.SetBkMode(hdc, 1)
+        S = _SHELL.get("scale") or 1.0
+
+        _g.SelectObject(hdc, _SHELL.get("f_ask_title") or 0)
+        _g.SetTextColor(hdc, 0x00F4ECE8)
+        r1 = wintypes.RECT(int(22 * S), int(16 * S), rc.right - int(22 * S), int(48 * S))
+        _u.DrawTextW(hdc, "测速台还在后台运行", -1, ctypes.byref(r1), 0x0020 | 0x0004)
+
+        _g.SelectObject(hdc, _SHELL.get("f_ask_body") or 0)
+        _g.SetTextColor(hdc, 0x00B8A49A)
+        r2 = wintypes.RECT(int(22 * S), int(50 * S), rc.right - int(22 * S), int(108 * S))
+        _u.DrawTextW(hdc, "关掉浏览器标签页不会退出程序。\n"
+                          "是要它留在后台继续待命，还是顺手把进程也结束？",
+                     -1, ctypes.byref(r2), 0x0010)
+    finally:
+        _u.EndPaint(hwnd, ctypes.byref(ps))
+
+
+def _ask_proc(hwnd, msg, wparam, lparam):
+    try:
+        if msg == 0x000F:                        # WM_PAINT
+            _ask_paint(hwnd)
+            return 0
+        if msg == 0x0111:                        # WM_COMMAND
+            cid = wparam & 0xFFFF
+            if cid == ID_MIN:
+                _ASK["result"] = "minimize"
+                _u.DestroyWindow(hwnd)
+                return 0
+            if cid == ID_BYE:
+                _ASK["result"] = "exit"
+                _u.DestroyWindow(hwnd)
+                return 0
+        if msg == 0x0010:                        # WM_CLOSE：点 X 按「留在后台」处理，不杀进程
+            _ASK["result"] = "minimize"
+            _u.DestroyWindow(hwnd)
+            return 0
+        if msg == 0x0002:                        # WM_DESTROY
+            _u.PostQuitMessage(0)
+            return 0
+    except Exception:
+        pass
+    return _u.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
 def ask_exit_mode() -> str:
-    """原生对话框：最小化到托盘 还是 彻底退出。返回 minimize / exit。"""
+    """自绘对话框：最小化到托盘 / 彻底退出。返回 minimize 或 exit。"""
     if not HAS_SHELL:
         return "exit"
-    msg = ("测速台还在后台运行。\n\n"
-           "「是」= 最小化到系统托盘，后台待命\n"
-           "          双击托盘图标可重新打开界面\n\n"
-           "「否」= 彻底退出，结束进程")
-    try:
-        flags = 0x4 | 0x20 | 0x40000 | 0x10000  # YESNO | QUESTION | TOPMOST | SETFOREGROUND
-        r = ctypes.windll.user32.MessageBoxW(None, msg, "CF-Pick · 退出", flags)
-        return "minimize" if r == 6 else "exit"   # IDYES = 6
-    except Exception:
+    _ASK["result"] = None
+    k = ctypes.windll.kernel32
+    hinst = k.GetModuleHandleW(None)
+    S = _SHELL.get("scale") or _dpi_scale()
+
+    proc = _WNDPROC(_ask_proc)
+    _KEEP.append(proc)
+    wc = _WNDCLASS()
+    wc.lpfnWndProc = ctypes.cast(proc, ctypes.c_void_p)
+    wc.hInstance = hinst
+    wc.hbrBackground = _SHELL.get("brush")
+    wc.hCursor = _u.LoadCursorW(None, 32512)
+    wc.lpszClassName = "CFPickAskWnd"
+    _u.RegisterClassW(ctypes.byref(wc))
+
+    w, h = int(430 * S), int(200 * S)
+    sw, sh = _u.GetSystemMetrics(0), _u.GetSystemMetrics(1)
+    hwnd = _u.CreateWindowExW(0x00000008, "CFPickAskWnd", "CF-Pick · 退出",
+                              0x00C80000,   # CAPTION | SYSMENU
+                              int((sw - w) / 2), int((sh - h) / 2), w, h,
+                              None, None, hinst, None)
+    if not hwnd:
         return "exit"
+
+    _SHELL.setdefault("f_ask_title", _make_font(int(19 * S), 600))
+    _SHELL.setdefault("f_ask_body", _make_font(int(14 * S), 400))
+    f_btn = _make_font(int(14 * S), 400)
+
+    def btn(text, x, cw, cid):
+        hs = int(38 * S)
+        bh = _u.CreateWindowExW(0, "BUTTON", text, 0x50000000,
+                                int(x * S), int(122 * S), int(cw * S), hs,
+                                hwnd, ctypes.c_void_p(cid), hinst, None)
+        if bh and f_btn:
+            _u.SendMessageW(bh, 0x0030, f_btn, 1)
+
+    btn("最小化到托盘", 22, 128, ID_MIN)
+    btn("彻底退出", 164, 104, ID_BYE)
+
+    _u.ShowWindow(hwnd, 5)
+    _u.SetForegroundWindow(hwnd)
+
+    msg = wintypes.MSG()
+    while _u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        _u.TranslateMessage(ctypes.byref(msg))
+        _u.DispatchMessageW(ctypes.byref(msg))
+    return _ASK["result"] or "minimize"
 
 
 def _show_window(show: bool = True) -> None:
