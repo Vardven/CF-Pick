@@ -435,9 +435,14 @@ async function beat(){
   try{
     const ac = new AbortController();
     const tm = setTimeout(()=>ac.abort(), 1600);
-    const r = await fetch("/api/ping?page=1&t=" + Date.now(), {cache:"no-store", signal:ac.signal});
+    const r = await fetch("/api/beat?t=" + Date.now(), {cache:"no-store", signal:ac.signal});
     clearTimeout(tm);
-    ok = r.ok && (await r.text()).trim() === "ok";
+    const d = r.ok ? await r.json() : null;
+    ok = !!(d && d.ok);
+    if(ok && typeof d.auto_open === "boolean"){
+      const box = $("#autoOpen");
+      if(box && box.checked !== d.auto_open) box.checked = d.auto_open;  // 状态小窗里改过就跟着变
+    }
   }catch(e){ ok = false; }
 
   const first = !CONN.seen;

@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 DEFAULT_SNI = "cdn.example.com"
 DEFAULT_PORT = 443
 PORTS = list(range(5390, 5406))
@@ -590,6 +590,9 @@ class Handler(BaseHTTPRequestHandler):
             if "page=1" in (u.query or ""):
                 page_touch()
             return self._send(200, "ok", "text/plain")
+        if p == "/api/beat":
+            page_touch()
+            return self._json({"ok": True, "auto_open": auto_open_setting()})
         if p == "/api/init":
             snap = snapshot()
             return self._json({
@@ -657,11 +660,9 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(cfg)
             return self._json(start_run(cfg))
         if p == "/api/prefs":
-            cfg = load_cfg()
             if "auto_open" in body:
-                cfg["auto_open"] = bool(body.get("auto_open"))
-            save_cfg(cfg)
-            return self._json({"auto_open": cfg["auto_open"]})
+                return self._json({"auto_open": set_auto_open(bool(body.get("auto_open")))})
+            return self._json({"auto_open": auto_open_setting()})
         if p == "/api/stop":
             STATE.stop.set()
             return self._json({"stopped": True})
@@ -814,6 +815,14 @@ if HAS_SHELL:
     _g.CreateFontW.restype = wintypes.HANDLE
     _g.CreateSolidBrush.restype = wintypes.HBRUSH
     _g.CreateSolidBrush.argtypes = [wintypes.DWORD]
+    _g.CreatePen.restype = ctypes.c_void_p
+    _g.CreatePen.argtypes = [ctypes.c_int, ctypes.c_int, wintypes.DWORD]
+    _g.RoundRect.argtypes = [wintypes.HDC] + [ctypes.c_int] * 6
+    _g.MoveToEx.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+    _g.LineTo.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    _g.DeleteObject.argtypes = [ctypes.c_void_p]
+    _u.InvalidateRect.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
+    _u.SetTimer.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p]
     _s.ExtractIconW.restype = wintypes.HICON
     _s.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(_NID)]
     _s.Shell_NotifyIconW.restype = wintypes.BOOL
@@ -1059,6 +1068,61 @@ def _tray_popup(hwnd) -> None:
         quit_now()
 
 
+_AO = {"v": True, "t": 0.0}
+
+
+def auto_open_setting() -> bool:
+    """开关读得比较频繁，缓存 1 秒，免得每次都去碰文件。"""
+    now = time.time()
+    if now - _AO["t"] > 1.0:
+        _AO["v"] = bool(load_cfg().get("auto_open", True))
+        _AO["t"] = now
+    return _AO["v"]
+
+
+def set_auto_open(on: bool) -> bool:
+    cfg = load_cfg()
+    cfg["auto_open"] = bool(on)
+    save_cfg(cfg)
+    _AO["v"] = bool(on)
+    _AO["t"] = time.time()
+    log("auto_open -> %s" % ("on" if on else "off"))
+    return _AO["v"]
+
+
+def _check_hit(x: int, y: int) -> bool:
+    """点击是否落在勾选行上。"""
+    S = _SHELL.get("scale") or 1.0
+    return (int(14 * S) <= x <= int(320 * S)) and (int(102 * S) <= y <= int(130 * S))
+
+
+def _draw_checkbox(hdc, x: int, y: int, S: float, on: bool) -> None:
+    box = int(15 * S)
+    l, t, r, b = x, y, x + box, y + box
+    if on:
+        fill, edge = 0x00EED322, 0x00EED322          # #22d3ee
+    else:
+        fill, edge = 0x00120D0A, 0x00504A45          # 深底 + 暗边
+    br = _g.CreateSolidBrush(fill)
+    pen = _g.CreatePen(0, max(1, int(S)), edge)
+    try:
+        _g.SelectObject(hdc, br)
+        _g.SelectObject(hdc, pen)
+        _g.RoundRect(hdc, l, t, r, b, int(9 * S), int(9 * S))
+    finally:
+        _g.DeleteObject(br)
+        _g.DeleteObject(pen)
+    if on:                                            # 打勾
+        pen2 = _g.CreatePen(0, max(2, int(2 * S)), 0x00120F0B)
+        try:
+            _g.SelectObject(hdc, pen2)
+            _g.MoveToEx(hdc, l + int(4 * S), t + int(8 * S), None)
+            _g.LineTo(hdc, l + int(7 * S), t + int(11 * S))
+            _g.LineTo(hdc, l + int(12 * S), t + int(4 * S))
+        finally:
+            _g.DeleteObject(pen2)
+
+
 def _paint(hwnd) -> None:
     """自绘文字，避免 STATIC 控件在深色背景上留下白块。"""
     ps = _PAINTSTRUCT()
@@ -1072,16 +1136,28 @@ def _paint(hwnd) -> None:
         _g.SelectObject(hdc, _SHELL.get("f_big") or 0)
         _g.SetTextColor(hdc, 0x00F4ECE8)          # RGB(232,236,244)
         S = _SHELL.get("scale") or 1.0
-        r1 = wintypes.RECT(int(20 * S), int(10 * S), rc.right - int(20 * S), int(52 * S))
+        r1 = wintypes.RECT(int(20 * S), int(8 * S), rc.right - int(20 * S), int(46 * S))
         _u.DrawTextW(hdc, "● 本地服务运行中 · 端口 %d" % (_SHELL["port"] or 0),
                      -1, ctypes.byref(r1), 0x0020 | 0x0004)  # SINGLELINE | VCenter
 
+        on = auto_open_setting()
+        _SHELL["ao_shown"] = on
+
         _g.SelectObject(hdc, _SHELL.get("f_mid") or 0)
         _g.SetTextColor(hdc, 0x00B8A49A)          # RGB(154,164,184)
-        r2 = wintypes.RECT(int(20 * S), int(54 * S), rc.right - int(20 * S), int(112 * S))
-        _u.DrawTextW(hdc, "浏览器界面已打开，关掉标签页不影响后台运行。\n"
-                          "关闭本窗口可选择「最小化到托盘」或「彻底退出」。",
-                     -1, ctypes.byref(r2), 0x0010)          # WORDBREAK
+        r2 = wintypes.RECT(int(20 * S), int(46 * S), rc.right - int(20 * S), int(100 * S))
+        desc = ("启动时自动打开浏览器界面，关掉标签页不影响后台运行。\n"
+                "关闭本窗口可选择「最小化到托盘」或「彻底退出」。") if on else \
+               ("已关闭自动打开：点下方「打开界面」进入测速台。\n"
+                "关闭本窗口可选择「最小化到托盘」或「彻底退出」。")
+        _u.DrawTextW(hdc, desc, -1, ctypes.byref(r2), 0x0010)          # WORDBREAK
+
+        # 勾选行：[✓] 启动 exe 时自动打开界面
+        _draw_checkbox(hdc, int(20 * S), int(106 * S), S, on)
+        r3 = wintypes.RECT(int(42 * S), int(103 * S), rc.right - int(20 * S), int(127 * S))
+        _g.SetTextColor(hdc, 0x00C0AC9F)
+        _u.DrawTextW(hdc, "启动 exe 时自动打开界面", -1,
+                     ctypes.byref(r3), 0x0020 | 0x0004)
     finally:
         _u.EndPaint(hwnd, ctypes.byref(ps))
 
@@ -1107,6 +1183,17 @@ def _shell_proc(hwnd, msg, wparam, lparam):
             if cid == ID_QUIT:
                 _on_close(hwnd)
                 return 0
+        if msg == 0x0201:                        # WM_LBUTTONDOWN：点勾选行
+            x = lparam & 0xFFFF
+            y = (lparam >> 16) & 0xFFFF
+            if _check_hit(x, y):
+                set_auto_open(not auto_open_setting())
+                _u.InvalidateRect(hwnd, None, True)
+                return 0
+        if msg == 0x0113:                        # WM_TIMER：网页那边改了开关也跟着刷新
+            if auto_open_setting() != _SHELL.get("ao_shown"):
+                _u.InvalidateRect(hwnd, None, True)
+            return 0
         if msg == 0x000F:                        # WM_PAINT
             _paint(hwnd)
             return 0
@@ -1147,7 +1234,7 @@ def _build_window(port: int):
     def sc(v):
         return int(round(v * S))
 
-    width, height = sc(430), sc(186)
+    width, height = sc(480), sc(212)
     sw = u.GetSystemMetrics(0)
     sh = u.GetSystemMetrics(1)
     x = int((sw - width) / 2)
@@ -1179,8 +1266,8 @@ def _build_window(port: int):
             u.SendMessageW(h, 0x0030, font, 1)   # WM_SETFONT
         return h
 
-    child("BUTTON", "打开界面", 0x00000000, sc(20), sc(116), sc(112), sc(34), ID_OPEN, f_btn)
-    child("BUTTON", "退出", 0x00000000, sc(144), sc(116), sc(112), sc(34), ID_QUIT, f_btn)
+    child("BUTTON", "打开界面", 0x00000000, sc(92), sc(136), sc(140), sc(34), ID_OPEN, f_btn)
+    child("BUTTON", "退出", 0x00000000, sc(248), sc(136), sc(140), sc(34), ID_QUIT, f_btn)
     _SHELL["scale"] = S
 
     _SHELL["hwnd"] = hwnd
@@ -1193,6 +1280,7 @@ def _build_window(port: int):
 
     u.ShowWindow(hwnd, 5)
     u.UpdateWindow(hwnd)
+    u.SetTimer(hwnd, 1, 2000, None)
     for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE（新/旧编号）
         try:
             on = ctypes.c_int(1)
