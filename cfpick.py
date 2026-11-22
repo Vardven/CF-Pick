@@ -173,6 +173,7 @@ def load_cfg() -> dict:
     # 老版本把示例域名当默认值存进了配置：一律清空，让输入框回到空白
     if str(cfg.get("sni") or "").strip().lower() == LEGACY_SNI:
         cfg["sni"] = ""
+        save_cfg(cfg)          # 顺手把磁盘上的旧值也抹掉，别让配置文件里留着假域名
     return cfg
 
 
