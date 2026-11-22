@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -1103,7 +1103,7 @@ class Handler(BaseHTTPRequestHandler):
             if probe["blocked"] or (probe["soft"] and not ignore):
                 log("run blocked: proxy in use -> " +
                     "; ".join(i["label"] for i in probe["items"]))
-                return self._json({"error": "检测到 VPN / 代理正在运行，请先关闭再测速",
+                return self._json({"error": "检测到代理 / VPN 正在运行，先关掉再测速",
                                    "blocked": True,
                                    "items": probe["items"],
                                    "hard": probe["hard"],
