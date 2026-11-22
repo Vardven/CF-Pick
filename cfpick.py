@@ -31,10 +31,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.1.2"
+VERSION = "1.2.0"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
+# Cloudflare 只代理这 6 个 HTTPS 端口，优选就在这些端口上做
+CF_PORTS = [443, 8443, 2053, 2083, 2087, 2096]
 PORTS = list(range(5390, 5406))
 
 USABLE_CODES_HINT = "200/400/404 = 路径已通（源站拒绝普通请求属正常）"
@@ -200,9 +202,24 @@ def is_first_instance() -> bool:
 # --------------------------------------------------------------------------
 # 配置 / 候选
 # --------------------------------------------------------------------------
+def _ports_of(cfg) -> list:
+    """本次要测的端口列表：新配置读 ports，老配置退回单个 port。"""
+    raw = cfg.get("ports") or [cfg.get("port") or DEFAULT_PORT]
+    out = []
+    for v in raw:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n in CF_PORTS and n not in out:
+            out.append(n)
+    return out or [DEFAULT_PORT]
+
+
 DEFAULT_CFG = {
     "sni": DEFAULT_SNI,
-    "port": DEFAULT_PORT,
+    "port": DEFAULT_PORT,          # 老字段：单端口时代的配置，仍读写
+    "ports": [DEFAULT_PORT],       # 端口多选：勾几个就并行测几个
     "tries": 2,
     "concurrency": 32,
     "family": "auto",
@@ -215,13 +232,18 @@ DEFAULT_CFG = {
 
 def load_cfg() -> dict:
     cfg = dict(DEFAULT_CFG)
+    legacy_port = True
     try:
         with open(CFG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             cfg.update({k: v for k, v in data.items() if k in DEFAULT_CFG})
+            legacy_port = "ports" not in data
     except Exception:
         pass
+    # 老配置只存了单个 port：升成 ports，别把人家选的端口悄悄改回 443
+    if legacy_port:
+        cfg["ports"] = _ports_of({"port": cfg.get("port")})
     # 老版本把示例域名当默认值存进了配置：一律清空，让输入框回到空白
     if str(cfg.get("sni") or "").strip().lower() == LEGACY_SNI:
         cfg["sni"] = ""
@@ -557,7 +579,7 @@ def _resolve_all(items, cfg):
     jobs = []
     per_fam_cap = max(1, int(cfg.get("max_ips", 2)))
     with ThreadPoolExecutor(max_workers=min(64, max(8, cfg["concurrency"] * 2))) as ex:
-        futs = {ex.submit(resolve, it, cfg["port"], cfg["family"]): it for it in items}
+        futs = {ex.submit(resolve, it, _ports_of(cfg)[0], cfg["family"]): it for it in items}
         for fut in as_completed(futs):
             if STATE.stop.is_set():
                 break
@@ -590,7 +612,8 @@ def _resolve_all(items, cfg):
                 for fam in (socket.AF_INET6, socket.AF_INET):
                     picked = [a for a in cf_addrs if a[0] == fam][:per_fam_cap]
                     for f, ip, src in picked:
-                        jobs.append((cand, f, ip, src))
+                        for p in _ports_of(cfg):
+                            jobs.append((cand, f, ip, src, p))
             with STATE.lock:
                 STATE.done += 1
     return jobs
@@ -598,14 +621,14 @@ def _resolve_all(items, cfg):
 
 def _run_jobs(jobs, cfg):
     tries = cfg["tries"]
-    sni, port = cfg["sni"], cfg["port"]
+    sni = cfg["sni"]
     try:
         with ThreadPoolExecutor(max_workers=cfg["concurrency"]) as ex:
             futs = {}
             for job in jobs:
                 if STATE.stop.is_set():
                     break
-                futs[ex.submit(_one_entry, job, tries, sni, port)] = job
+                futs[ex.submit(_one_entry, job, tries, sni)] = job
             for fut in as_completed(futs):
                 try:
                     entry = fut.result()
@@ -626,8 +649,8 @@ def _run_jobs(jobs, cfg):
             STATE.finished = time.strftime("%H:%M:%S")
 
 
-def _one_entry(job, tries, sni, port):
-    cand, fam, ip, src = job
+def _one_entry(job, tries, sni):
+    cand, fam, ip, src, port = job
     fam_name = "v6" if fam == socket.AF_INET6 else "v4"
     lat, codes, err = [], [], ""
     for _ in range(tries):
@@ -643,11 +666,12 @@ def _one_entry(job, tries, sni, port):
         ms = int(round(sum(lat) / len(lat)))
         code = codes[-1]
         status = classify(code)
-        return {"domain": cand, "family": fam_name, "ip": ip, "ms": ms, "status": status,
-                "code": code, "ok": len(lat), "tries": tries, "usable": status == "可用",
-                "asn": src or ""}
-    return {"domain": cand, "family": fam_name, "ip": ip, "ms": None, "status": err or "不通",
-            "code": 0, "ok": 0, "tries": tries, "usable": False, "asn": src or ""}
+        return {"domain": cand, "family": fam_name, "ip": ip, "port": port, "ms": ms,
+                "status": status, "code": code, "ok": len(lat), "tries": tries,
+                "usable": status == "可用", "asn": src or ""}
+    return {"domain": cand, "family": fam_name, "ip": ip, "port": port, "ms": None,
+            "status": err or "不通", "code": 0, "ok": 0, "tries": tries,
+            "usable": False, "asn": src or ""}
 
 
 def start_run(cfg) -> dict:
@@ -925,14 +949,16 @@ def csv_bytes() -> bytes:
     res.sort(key=lambda r: (0, r["ms"]) if r["usable"] else (1, 0))
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["排名", "入口", "地址族", "解析IP", "延迟(ms)", "成功次数", "状态"])
+    w.writerow(["排名", "入口", "地址族", "解析IP", "端口", "延迟(ms)", "成功次数", "状态"])
     rank = 0
     for r in res:
         if r["usable"]:
             rank += 1
-            w.writerow([rank, r["domain"], r["family"].upper(), r["ip"], r["ms"], "%d/%d" % (r["ok"], r["tries"]), r["status"]])
+            w.writerow([rank, r["domain"], r["family"].upper(), r["ip"], r.get("port", ""),
+                        r["ms"], "%d/%d" % (r["ok"], r["tries"]), r["status"]])
         else:
-            w.writerow(["-", r["domain"], r["family"].upper(), r["ip"], "-", "0/%d" % r["tries"], r["status"]])
+            w.writerow(["-", r["domain"], r["family"].upper(), r["ip"], r.get("port", ""),
+                        "-", "0/%d" % r["tries"], r["status"]])
     return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
@@ -1084,7 +1110,19 @@ class Handler(BaseHTTPRequestHandler):
                                    "soft": probe["soft"]})
             try:
                 cfg["sni"] = str(body.get("sni") or "").strip()
-                cfg["port"] = max(1, min(65535, int(body.get("port") or DEFAULT_PORT)))
+                raw = body.get("ports")
+                if not isinstance(raw, list):
+                    raw = [body.get("port")] if body.get("port") else []
+                ports = []
+                for v in raw:
+                    try:
+                        n = int(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if n in CF_PORTS and n not in ports:
+                        ports.append(n)
+                cfg["ports"] = ports or _ports_of(cfg)
+                cfg["port"] = cfg["ports"][0]
                 cfg["tries"] = max(1, min(10, int(body.get("tries") or 2)))
                 cfg["concurrency"] = max(4, min(64, int(body.get("concurrency") or 32)))
                 cfg["family"] = body.get("family") if body.get("family") in ("auto", "v4", "v6") else "auto"

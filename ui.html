@@ -179,6 +179,18 @@ input:focus,textarea:focus{border-color:color-mix(in srgb,var(--c1) 55%,transpar
 input:disabled{opacity:.55}
 textarea{resize:vertical;min-height:118px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:1.65}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lab-note{margin-left:auto;font-size:10.5px;color:var(--t4);letter-spacing:.2px}
+
+/* 端口多选：6 个格子，点一下切换；至少留一个 */
+.ports{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.ports button{appearance:none;font-family:inherit;font-size:12px;letter-spacing:.3px;padding:8px 0;border-radius:9px;
+  cursor:pointer;color:var(--t3);background:color-mix(in srgb,var(--slab) 72%,transparent);
+  border:1px solid color-mix(in srgb,var(--ink) 8%,transparent);transition:.16s}
+.ports button:hover{color:var(--t15);border-color:color-mix(in srgb,var(--ink) 18%,transparent)}
+.ports button.on{color:var(--c1b);border-color:color-mix(in srgb,var(--c1) 42%,transparent);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--c1) 18%,transparent),color-mix(in srgb,var(--c1) 8%,transparent));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c1) 24%,transparent)}
+.ports button:disabled{opacity:.5;cursor:default}
 .hint{font-size:11px;color:var(--t3);line-height:1.6;margin:8px 0 0}
 .hint code{color:var(--t2);background:color-mix(in srgb,var(--ink) 5%,transparent);padding:1px 5px;border-radius:4px;font-size:10.5px}
 
@@ -324,6 +336,9 @@ tbody tr:last-child td{border-bottom:0}
   font-family:ui-monospace,Consolas,monospace}
 .pill.v6{color:var(--c1c);background:color-mix(in srgb,var(--c1) 13%,transparent);border:1px solid color-mix(in srgb,var(--c1) 28%,transparent)}
 .pill.v4{color:var(--c2b);background:color-mix(in srgb,var(--c2) 13%,transparent);border:1px solid color-mix(in srgb,var(--c2) 28%,transparent)}
+.pt{display:inline-block;padding:2px 6px;border-radius:6px;font-size:11px;letter-spacing:.2px;
+  font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--t15);
+  background:color-mix(in srgb,var(--ink) 5%,transparent);border:1px solid color-mix(in srgb,var(--ink) 9%,transparent)}
 .lat{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .lat b{font-size:15px;font-weight:650;color:var(--t1);letter-spacing:-.2px}
 .lat span{font-size:10.5px;color:var(--t4);margin-left:2px}
@@ -516,37 +531,40 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
             <em>在哪找：Cloudflare 控制台 → DNS → 记录列表里「代理状态」显示已代理的那一条，复制它的名称。</em>
           </div>
         </div>
-        <div class="row">
-          <div class="field">
-            <label for="port" title="Cloudflare 只代理这几个 HTTPS 端口，优选就在这些端口上做">端口</label>
-            <select id="port" title="Cloudflare 只代理这几个 HTTPS 端口">
-              <option value="443" selected>443（默认）</option>
-              <option value="8443">8443</option>
-              <option value="2053">2053</option>
-              <option value="2083">2083</option>
-              <option value="2087">2087</option>
-              <option value="2096">2096</option>
-            </select>
+        <div class="field">
+          <div class="lab">
+            <label>端口</label>
+            <span class="lab-note" id="portNote">可多选 · 勾几个就并行测几个</span>
           </div>
+          <div class="ports" id="ports">
+            <button type="button" class="on" data-p="443" title="Cloudflare 默认 HTTPS 端口">443</button>
+            <button type="button" data-p="8443">8443</button>
+            <button type="button" data-p="2053">2053</button>
+            <button type="button" data-p="2083">2083</button>
+            <button type="button" data-p="2087">2087</button>
+            <button type="button" data-p="2096">2096</button>
+          </div>
+        </div>
+        <div class="row">
           <div class="field">
             <label>每项测几次</label>
             <input type="number" id="tries" value="2" min="1" max="10">
           </div>
+          <div class="field">
+            <label>并发数</label>
+            <div class="slider">
+              <input type="range" id="conc" min="4" max="64" step="2" value="32">
+              <output id="concOut">32</output>
+            </div>
+          </div>
         </div>
-        <p class="hint" style="margin:-2px 0 11px">只能选 CF 代理的 HTTPS 端口（就这 6 个）。客户端里节点的端口要跟这里保持一致。</p>
+        <p class="hint" style="margin:-2px 0 11px">只有这 6 个是 CF 代理的 HTTPS 端口。勾几个就同时测几个，同一 IP 不同端口分开计分；客户端里节点的端口要在选中范围内。</p>
         <div class="field">
           <label>地址族</label>
           <div class="seg" id="fam">
             <button data-v="auto" class="on">自动</button>
             <button data-v="v6">仅 IPv6</button>
             <button data-v="v4">仅 IPv4</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>并发数</label>
-          <div class="slider">
-            <input type="range" id="conc" min="4" max="64" step="2" value="32">
-            <output id="concOut">32</output>
           </div>
         </div>
         <div class="stack" style="margin-top:18px">
@@ -616,15 +634,16 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
               <tr>
                 <th style="width:44px">#</th>
                 <th>入口 / 解析 IP</th>
-                <th style="width:60px">族</th>
-                <th class="num" style="width:86px">延迟</th>
-                <th style="width:132px">对比</th>
-                <th style="width:52px">成功</th>
-                <th style="width:96px">状态</th>
+                <th style="width:52px">端口</th>
+                <th style="width:56px">族</th>
+                <th class="num" style="width:80px">延迟</th>
+                <th style="width:104px">对比</th>
+                <th style="width:48px">成功</th>
+                <th style="width:90px">状态</th>
               </tr>
             </thead>
             <tbody id="tbody">
-              <tr><td colspan="7">
+              <tr><td colspan="8">
                 <div class="empty">
                   <div class="ico">◎</div>
                   还没有数据
@@ -910,7 +929,7 @@ function applyDemo(){
   $("#btnImport").title = "直接打开 ui.html 时没有后端，导入不可用";
   $("#candCount").textContent = "414 项";
   $("#cands").value = DEMO.map(r=>r.domain).join("\n");
-  S.results = DEMO.slice();
+  S.results = DEMO.map(r => Object.assign({}, r, {port: r.port || 443}));
   S.done = 1351; S.total = 1351; S.t0 = Date.now() - 75000;
   render();
   $("#fill").style.width = "100%";
@@ -921,19 +940,41 @@ function applyDemo(){
   $("#boardNote").textContent = "演示榜单";
 }
 
-/* 端口下拉：CF 只代理 443/8443/2053/2083/2087/2096 这几个 HTTPS 端口。
-   老配置里存过别的端口就临时补一个选项，别把人家填的值悄悄改成 443 */
-function setPort(v){
-  const sel = $("#port");
-  const n = parseInt(v, 10) || 443;
-  if(![...sel.options].some(o => o.value === String(n))){
-    const o = document.createElement("option");
-    o.value = String(n); o.textContent = n + "（自定义）";
-    sel.appendChild(o);
-  }
-  sel.value = String(n);
-  return String(n);
+/* ---------- 端口多选 ----------
+   CF 只代理 443/8443/2053/2083/2087/2096 这 6 个 HTTPS 端口。
+   勾几个就并行测几个：同一个 IP 在不同端口上算两条独立结果，各自计分。 */
+function selectedPorts(){
+  return [...document.querySelectorAll("#ports button.on")]
+         .map(b => parseInt(b.dataset.p, 10))
+         .sort((a, b) => a - b);
 }
+
+function refreshPortNote(){
+  const n = selectedPorts().length, el = $("#portNote");
+  if(el) el.textContent = n > 1 ? n + " 个端口并行" : "可多选 · 勾几个就并行测几个";
+}
+
+function setPorts(list){
+  const want = new Set((Array.isArray(list) && list.length ? list : [443]).map(v => parseInt(v, 10)));
+  document.querySelectorAll("#ports button").forEach(b=>{
+    b.classList.toggle("on", want.has(parseInt(b.dataset.p, 10)));
+  });
+  if(!document.querySelector("#ports button.on")){     // 老配置里存了别的端口：落回 443
+    document.querySelector('#ports button[data-p="443"]').classList.add("on");
+  }
+  refreshPortNote();
+  return selectedPorts();
+}
+
+$("#ports").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-p]");
+  if(!b || b.disabled) return;
+  if(b.classList.contains("on") && selectedPorts().length === 1){
+    toast("至少要留一个端口"); return;
+  }
+  b.classList.toggle("on");
+  refreshPortNote();
+});
 
 /* ---------- 主题：暗色 / 亮色 / 色盲友好 ---------- */
 const THEMES = ["dark", "light", "cb"];
@@ -1029,7 +1070,7 @@ async function boot(){
     }
     S.envSkip = !!(d.config && d.config.skip_env_check);
     $("#sni").value = d.config.sni || "";
-    $("#port").value = setPort(d.config.port);
+    setPorts((d.config.ports && d.config.ports.length) ? d.config.ports : [d.config.port]);
     $("#tries").value = d.config.tries || 2;
     $("#conc").value = d.config.concurrency || 32;
     $("#concOut").textContent = $("#conc").value;
@@ -1069,9 +1110,10 @@ $("#conc").oninput = e => $("#concOut").textContent = e.target.value;
 /* ---------- run ---------- */
 function lockUI(run){
   S.running = run;
-  ["sni","port","tries","conc","btnSave"].forEach(id=>{
+  ["sni","tries","conc","btnSave"].forEach(id=>{
     $("#"+id).disabled = run;
   });
+  document.querySelectorAll("#ports button").forEach(b=>{ b.disabled = run; });
   ["btnImport","btnClear"].forEach(id=>{ $("#"+id).disabled = run; });
   $("#btnRun").disabled = run || !CONN.ok;
   $("#btnStop").disabled = !run;
@@ -1086,7 +1128,8 @@ async function start(ignoreEnv){
   if(/^[a-z][a-z0-9+.-]*:\/\//i.test(sni) || /[\/\s]/.test(sni)){
     sniHint("format"); return;
   }
-  const port = parseInt($("#port").value)||443;
+  const ports = selectedPorts();
+  if(!ports.length){ toast("至少选一个端口"); return; }
   const tries = Math.min(10, Math.max(1, parseInt($("#tries").value)||2));
   const conc  = Math.min(64, Math.max(4, parseInt($("#conc").value)||32));
 
@@ -1111,7 +1154,7 @@ async function start(ignoreEnv){
   S.results = []; S.since = 0; S.done = 0; S.total = 0; S.t0 = Date.now(); S.phase = "resolve";
   render();
   try{
-    const d = await api("/api/run", {sni, port, tries, concurrency:conc, family:S.family,
+    const d = await api("/api/run", {sni, port: ports[0], ports, tries, concurrency:conc, family:S.family,
                                      ignore_env: !!ignoreEnv});
     if(d.error){
       if(d.blocked) showVpn((d.hard && d.hard.length) ? d.hard : d.items, !(d.soft && d.soft.length && !d.hard));
@@ -1198,6 +1241,13 @@ async function tick(){
 }
 
 /* ---------- render ---------- */
+/* 复制用的 endpoint 文本：IPv6 必须套方括号，不然 2606:4700::1:443 分不清哪一段是端口 */
+function epText(r){
+  const ip = r.ip || "";
+  const host = (r.family === "v6" && ip.includes(":")) ? "[" + ip + "]" : ip;
+  return host + ":" + (r.port || "");
+}
+
 function render(){
   const usable = S.results.filter(r=>r.usable).sort((a,b)=>a.ms-b.ms);
   const blocked = S.results.filter(r=>r.status==="被CF拦截").length;
@@ -1229,7 +1279,7 @@ function render(){
   const tbody = $("#tbody");
   if(!top.length){
     if(!S.running){
-      tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="ico">◎</div>还没有数据<p>点击左侧「开始测速」，榜单会随进度实时刷新</p></div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><div class="ico">◎</div>还没有数据<p>点击左侧「开始测速」，榜单会随进度实时刷新</p></div></td></tr>';
     }
     return;
   }
@@ -1242,10 +1292,12 @@ function render(){
     const w = Math.max(6, Math.round(best / r.ms * 100));
     const dots = "●".repeat(r.ok) + "○".repeat(Math.max(0, r.tries - r.ok));
     const stCls = r.status === "可用" ? "ok" : "warn";
-    return '<tr class="fresh" title="点击复制 ' + r.domain + '">' +
+    const ep = epText(r);
+    return '<tr class="fresh" data-copy="' + ep + '" title="点击复制 ' + ep + '">' +
       '<td><div class="rk ' + rankCls + '">' + (i+1) + '</div></td>' +
       '<td><div class="dom">' + r.domain + '</div><div class="ip">' + r.ip +
         (r.asn ? '<span class="asn">' + r.asn + '</span>' : '') + '</div></td>' +
+      '<td><span class="pt">' + (r.port || "—") + '</span></td>' +
       '<td><span class="pill ' + (r.family==="v6"?"v6":"v4") + '">' + (r.family==="v6"?"IPv6":"IPv4") + '</span></td>' +
       '<td class="lat ' + cls + '"><b>' + r.ms + '</b><span>ms</span></td>' +
       '<td class="barcell"><div class="bar"><i class="' + cls + '" style="width:' + w + '%"></i></div></td>' +
@@ -1259,18 +1311,17 @@ function render(){
 
 $("#tbody").addEventListener("click", async (e)=>{
   const tr = e.target.closest("tr");
-  if(!tr) return;
-  const dom = tr.querySelector(".dom");
-  if(!dom) return;
-  try{ await navigator.clipboard.writeText(dom.textContent); toast("已复制 " + dom.textContent); }
+  if(!tr || !tr.dataset.copy) return;
+  const ep = tr.dataset.copy;
+  try{ await navigator.clipboard.writeText(ep); toast("已复制 " + ep); }
   catch(_){ toast("复制失败，请手动选择"); }
 });
 
 $("#btnCopy").onclick = async ()=>{
   const top = S.results.filter(r=>r.usable).sort((a,b)=>a.ms-b.ms).slice(0,MAXROWS);
   if(!top.length){ toast("还没有可用结果"); return; }
-  const txt = top.map(r=>r.domain).join("\n");
-  try{ await navigator.clipboard.writeText(txt); toast("已复制 " + top.length + " 个入口"); }
+  const txt = top.map(epText).join("\n");
+  try{ await navigator.clipboard.writeText(txt); toast("已复制 " + top.length + " 个 IP:端口"); }
   catch(_){ toast("复制失败"); }
 };
 
