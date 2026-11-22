@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip "pyinstaller==6.22.3"
+        run: python -m pip install --upgrade pip "pyinstaller==6.22.3" pywebview
 
       - name: Build icon
         run: python gen_icon.py
@@ -42,6 +42,8 @@ jobs:
           fi
           python -m PyInstaller --noconfirm --clean --onefile --noconsole \
             --name CF-Pick --icon icon.ico $SPLASH \
+            --collect-all webview \
+            --hidden-import webview.platforms.winforms --hidden-import clr \
             --add-data "ui.html;." --add-data "cf-domains.txt;." --add-data "cf-asn.txt;." cfpick.py
 
       - name: Smoke test

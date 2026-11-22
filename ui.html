@@ -298,6 +298,16 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 .dialog li::before{content:"·";color:#f0a97a;font-weight:700;margin-right:7px}
 .dialog .acts{display:flex;gap:9px;justify-content:flex-end;margin-top:16px}
 
+/* 内嵌窗口默认 900 高，屏幕不够高时把左栏收紧一点，让「保存并应用」也露出来 */
+@media(max-height:980px){
+  main{gap:13px}
+  .side{gap:9px}
+  .content{gap:10px}
+  .sect{padding:12px 13px 13px}
+  .sect h2{margin:0 0 9px}
+  .field{margin-bottom:9px}
+  .foot{margin-top:9px}
+}
 @media(max-width:1080px){
   main{grid-template-columns:1fr;overflow:auto}
   .side{overflow:visible}

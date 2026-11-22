@@ -947,9 +947,11 @@ class Handler(BaseHTTPRequestHandler):
             if mode == "minimize":
                 log("exit -> minimize to tray")
                 ui_minimize()
+                app_hide()
                 tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
             else:
                 log("exit -> quit")
+                _APP["quitting"] = True
                 tray_remove()
                 threading.Timer(0.4, lambda: os._exit(0)).start()
             return
@@ -981,6 +983,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/reopen":
             # 第二次双击 exe 时，由第二个进程调这里，让已跑着的实例把界面叫回来
             ui_reopen()
+            app_show()
             log("reopen requested by second instance")
             return self._json({"ok": True, "ui": ui_state()})
         if p == "/api/stop":
@@ -1010,9 +1013,11 @@ class Handler(BaseHTTPRequestHandler):
             if mode == "minimize":
                 log("exit -> minimize to tray")
                 ui_minimize()
+                app_hide()
                 tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
             else:
                 log("exit -> quit")
+                _APP["quitting"] = True
                 tray_remove()
                 threading.Timer(0.4, lambda: os._exit(0)).start()
             return
@@ -1356,14 +1361,18 @@ def _show_window(show: bool = True) -> None:
 
 
 def _on_close(hwnd) -> None:
-    """用户关窗：问一下是最小化到托盘还是彻底退出。"""
+    """状态小窗被关：问一下是最小化到托盘还是彻底退出。"""
     mode = ask_exit_mode()
     if mode == "minimize":
         log("window close -> minimize to tray")
         _show_window(False)
+        if _APP["win"]:
+            app_hide()
+            ui_minimize()
         tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
     else:
         log("window close -> quit")
+        _APP["quitting"] = True
         quit_now()
 
 
@@ -1371,7 +1380,8 @@ def _tray_popup(hwnd) -> None:
     u = ctypes.windll.user32
     hmenu = u.CreatePopupMenu()
     u.AppendMenuW(hmenu, 0x0, MENU_OPEN, "打开测速台")
-    u.AppendMenuW(hmenu, 0x0, MENU_SHOW, "显示状态窗口")
+    if not _APP["win"]:                   # 内嵌窗口就是界面本身，不再需要额外的状态窗
+        u.AppendMenuW(hmenu, 0x0, MENU_SHOW, "显示状态窗口")
     u.AppendMenuW(hmenu, 0x800, 0, None)  # MF_SEPARATOR
     u.AppendMenuW(hmenu, 0x0, MENU_EXIT, "彻底退出")
     pt = wintypes.POINT()
@@ -1381,11 +1391,11 @@ def _tray_popup(hwnd) -> None:
     u.PostMessageW(hwnd, 0, 0, 0)
     u.DestroyMenu(hmenu)
     if cmd == MENU_OPEN:
-        open_ui(_SHELL["port"])
-        _show_window(True)
+        bring_ui(_SHELL["port"])
     elif cmd == MENU_SHOW:
         _show_window(True)
     elif cmd == MENU_EXIT:
+        _APP["quitting"] = True
         quit_now()
 
 
@@ -1490,8 +1500,7 @@ def _shell_proc(hwnd, msg, wparam, lparam):
             if event in (0x0205, 0x0204):        # 右键抬起 / 按下
                 _tray_popup(hwnd)
             elif event in (0x0202, 0x0203):      # 左键单击 / 双击
-                open_ui(_SHELL["port"])
-                _show_window(True)
+                bring_ui(_SHELL["port"])
             return 0
         if msg == 0x0010:                        # WM_CLOSE
             _on_close(hwnd)
@@ -1499,7 +1508,7 @@ def _shell_proc(hwnd, msg, wparam, lparam):
         if msg == 0x0111:                        # WM_COMMAND
             cid = wparam & 0xFFFF
             if cid == ID_OPEN:
-                open_ui(_SHELL["port"])
+                bring_ui(_SHELL["port"])
                 return 0
             if cid == ID_QUIT:
                 _on_close(hwnd)
@@ -1599,8 +1608,12 @@ def _build_window(port: int):
     nid.szTip = "CF-Pick · 测速台运行中（端口 %d）" % port
     ctypes.windll.shell32.Shell_NotifyIconW(0, ctypes.byref(nid))
 
-    u.ShowWindow(hwnd, 5)
-    u.UpdateWindow(hwnd)
+    if _APP["embed"]:
+        # 内嵌窗口本身就是界面：这个窗口只当托盘宿主用，不显示，免得任务栏多一个
+        log("status window: hidden (embedded mode)")
+    else:
+        u.ShowWindow(hwnd, 5)
+        u.UpdateWindow(hwnd)
     u.SetTimer(hwnd, 1, 2000, None)
     for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE（新/旧编号）
         try:
@@ -1637,6 +1650,212 @@ def shell_start(port: int) -> bool:
             return True
         time.sleep(0.05)
     return False
+
+
+# --------------------------------------------------------------------------
+# 内嵌窗口（Edge WebView2）
+#
+# 双击 exe 直接出现一个自己的窗口，标题栏是程序名、任务栏是程序图标，
+# 不再借 Chrome / Edge 的 --app 壳。渲染还是 Edge 内核（WebView2 运行时，
+# Win10/11 默认自带），页面本身照旧由本地 HTTP 服务提供，前端一行不用改。
+#
+# 拿不到 WebView2 时自动退回浏览器模式，功能不少。
+# --------------------------------------------------------------------------
+_WV = {"mod": None, "tried": False}
+_APP = {"win": None, "quitting": False, "embed": False}
+WV2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+
+
+def _webview2_runtime() -> bool:
+    """查 Edge WebView2 运行时在不在（比硬启动一次试错快得多）。"""
+    try:
+        import winreg
+    except Exception:
+        return False
+    for hive, path in (
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\\" + WV2_GUID),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\\" + WV2_GUID),
+        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\EdgeUpdate\Clients\\" + WV2_GUID),
+    ):
+        try:
+            with winreg.OpenKey(hive, path) as k:
+                pv = str(winreg.QueryValueEx(k, "pv")[0]).strip()
+            if pv and pv != "0.0.0.0":
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def has_webview() -> bool:
+    """能不能用内嵌窗口。
+
+    CF_PICK_BROWSER=1 → 强制回到浏览器模式
+    CF_PICK_NO_BROWSER=1 → 完全不开界面（CI 冒烟测试用）
+    """
+    if not HAS_SHELL:
+        return False
+    if os.environ.get("CF_PICK_BROWSER") == "1":
+        return False
+    if os.environ.get("CF_PICK_NO_BROWSER") == "1":
+        return False
+    if not _WV["tried"]:
+        _WV["tried"] = True
+        try:
+            if not _webview2_runtime():
+                log("WebView2 运行时未安装 -> 浏览器模式")
+            else:
+                import webview
+                _WV["mod"] = webview
+                log("WebView2 就绪 -> 内嵌窗口模式")
+        except Exception:
+            log("pywebview 不可用 -> 浏览器模式: " + traceback.format_exc()[-300:])
+            _WV["mod"] = None
+    return _WV["mod"] is not None
+
+
+def app_hwnd():
+    """内嵌窗口的 Win32 句柄（隐藏时也要能找到，所以不过滤可见性）。"""
+    if os.name != "nt" or not _APP["win"]:
+        return None
+    try:
+        u32 = ctypes.windll.user32
+        hits = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def cb(hwnd, _lp):
+            n = u32.GetWindowTextLengthW(hwnd)
+            if n > 0:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u32.GetWindowTextW(hwnd, buf, n + 1)
+                if buf.value.startswith(PAGE_TITLE):
+                    hits.append(hwnd)
+            return True
+
+        u32.EnumWindows(cb, None)
+        return hits[0] if hits else None
+    except Exception:
+        return None
+
+
+def app_show() -> bool:
+    """把内嵌窗口叫回来（托盘双击 / 再双击 exe / 小窗按钮都走这里）。"""
+    w = _APP["win"]
+    if not w:
+        return False
+    try:
+        w.show()
+        try:
+            w.restore()                      # 之前是最小化状态的话先还原
+        except Exception:
+            pass
+        hwnd = app_hwnd()
+        if hwnd:
+            focus_window(hwnd)
+        try:                                  # 页面若盖着「已最小化」遮罩，顺手撤掉
+            w.evaluate_js("if(typeof restoreUI==='function') restoreUI();")
+        except Exception:
+            pass
+        return True
+    except Exception:
+        log("app_show failed: " + traceback.format_exc()[-300:])
+        return False
+
+
+def app_hide() -> None:
+    w = _APP["win"]
+    if not w:
+        return
+    try:
+        w.hide()
+    except Exception:
+        log("app_hide failed: " + traceback.format_exc()[-200:])
+
+
+def _app_closing():
+    """点窗口右上角 X：收进托盘，不结束进程。"""
+    if _APP["quitting"]:
+        return True
+    log("app window close -> hide to tray")
+    app_hide()
+    ui_minimize()
+    tray_balloon("测速台已收进系统托盘。双击图标打开，右键可彻底退出。")
+    return False                              # 返回 False = 取消关闭
+
+
+def _app_loaded():
+    splash_close()                     # 页面已经画出来了，撤掉启动图
+    threading.Thread(target=_dress_app_window, daemon=True).start()
+
+
+def _dress_app_window() -> None:
+    """窗口出来后补两件事：深色标题栏、程序图标（WinForms 默认是占位图标）。"""
+    hwnd = app_hwnd()
+    if not hwnd:
+        return
+    try:
+        icon = _tray_icon()
+        if icon:
+            user32 = ctypes.windll.user32
+            user32.SendMessageW(hwnd, 0x0080, 0, icon)      # WM_SETICON ICON_SMALL
+            user32.SendMessageW(hwnd, 0x0080, 1, icon)      # WM_SETICON ICON_BIG
+    except Exception:
+        pass
+    try:
+        for attr in (20, 19):                               # DWMWA_USE_IMMERSIVE_DARK_MODE
+            on = ctypes.c_int(1)
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+                break
+    except Exception:
+        pass
+
+
+def _app_size() -> tuple:
+    """窗口尺寸按屏幕来，别在小本子上开出一个超屏的大窗。"""
+    try:
+        u = ctypes.windll.user32
+        sw, sh = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+        s = _dpi_scale()
+        w = int(min(1240, sw / s - 90))
+        h = int(min(900, sh / s - 130))
+        return max(980, w), max(640, h)
+    except Exception:
+        return 1240, 900
+
+
+def embed_start(port: int) -> bool:
+    """开内嵌窗口并进入 GUI 循环（阻塞到窗口真关闭）。失败返回 False。"""
+    wv = _WV["mod"]
+    if not wv:
+        return False
+    w_px, h_px = _app_size()
+    try:
+        w = wv.create_window(
+            PAGE_TITLE + " · 测速台",
+            "http://127.0.0.1:%d/" % port,
+            width=w_px, height=h_px, min_size=(960, 620),
+            background_color="#0B0F1A",
+        )
+        _APP["win"] = w
+        w.events.closing += _app_closing
+        w.events.loaded += _app_loaded
+        log("embedded window created")
+        wv.start(debug=False)
+    except Exception:
+        log("内嵌窗口启动失败 -> 浏览器模式: " + traceback.format_exc()[-800:])
+        _APP["win"] = None
+        return False
+    log("embedded window destroyed -> exit")
+    os._exit(0)
+    return True
+
+
+def bring_ui(port: int) -> None:
+    """统一入口：内嵌窗口优先，其次旧浏览器窗口，最后才开新标签。"""
+    open_ui(port)
+    if not _APP["embed"]:
+        _show_window(True)                    # 浏览器模式下状态小窗才有意义
 
 
 # --------------------------------------------------------------------------
@@ -1712,6 +1931,10 @@ def open_ui(port: int) -> bool:
     """
     ui_reopen()
     if os.environ.get("CF_PICK_NO_BROWSER") == "1":
+        return False
+    if app_show():                        # 内嵌窗口模式：直接叫回自己的窗口
+        return True
+    if _APP["win"]:                       # 有窗口但这会儿叫不起来，别再开浏览器
         return False
     if focus_existing_page():
         return True
@@ -1807,12 +2030,30 @@ def main():
 
     log("listening on 127.0.0.1:%d  data=%s  启动耗时 %.2fs" % (port, DATA, time.time() - t0))
     splash_text("正在打开界面…")
-    splash_close()
     dpi_aware()
+
+    embed = has_webview()
+    _APP["embed"] = embed
+    if not embed:
+        splash_close()                 # 内嵌模式等窗口渲染完再关启动图，中间不留空档
+
     log("status window + tray: %s" % ("on" if shell_start(port) else "off"))
+
+    # 本地服务挪到后台线程：主线程要留给内嵌窗口（WebView2 的 GUI 循环必须在主线程）
+    threading.Thread(target=srv.serve_forever, name="cfpick-http", daemon=True).start()
+
+    if embed and embed_start(port):
+        return                                    # 窗口关闭后 embed_start 自己退出进程
+
+    # 内嵌窗口起不来（缺运行时 / 初始化失败）：退回原来的「浏览器 + 状态小窗」
+    if embed:
+        _APP["embed"] = False
+        _APP["win"] = None
+        log("回退到浏览器模式")
+        _show_window(True)
     threading.Timer(0.35, lambda: startup_open(port)).start()
     try:
-        srv.serve_forever()
+        threading.Event().wait()                  # 主线程挂住，服务在后台线程跑
     except KeyboardInterrupt:
         pass
 
