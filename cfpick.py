@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -312,6 +312,14 @@ def _res_lines(name: str) -> list:
     return []
 
 
+# 只留在判定表里、不当预置库的 AS。
+# 这两个 AS 的网段全球都有 BGP 路由，但 443 上压根没有 HTTP 服务：
+# 实测 AS395747 0/40、AS202623 0/30 全超时，做成预置库只会让人白扫一遍。
+# 留在 cf-asn.txt 里是为了判定时还能认出「这是 CF 的机器，只是不通」，
+# 而不是误报成「非CF节点」。
+NO_PRESET = {"AS395747", "AS202623"}
+
+
 def asn_groups() -> list:
     """读 cf-asn.txt：`[AS13335] 名称` 起一段，后面每行一个 IPv4 前缀"""
     groups, cur = [], None
@@ -374,7 +382,9 @@ def preset_list() -> list:
         "items": _sprinkle(CF_RANGES, 66),
     })
     for g in asn_groups():
-        want = {"AS13335": 150, "AS209242": 60, "AS395747": 40}.get(g["asn"], 30)
+        if g["asn"] in NO_PRESET:
+            continue
+        want = {"AS13335": 150, "AS209242": 60}.get(g["asn"], 30)
         items = _sprinkle(g["prefixes"], want)
         presets.append({
             "id": g["asn"].lower(),
