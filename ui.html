@@ -147,7 +147,10 @@ body.offline .offline-tip{display:block}
 
 /* ---------- layout ---------- */
 main{flex:1;display:grid;grid-template-columns:330px minmax(0,1fr);gap:15px;min-height:0}
-.side{display:flex;flex-direction:column;gap:13px;min-height:0;overflow:auto;padding-right:3px}
+/* 左栏自己不再整体滚动：「目标」卡片内部滚，候选抽屉吸住剩余高度。
+   这样窗口拖小的时候，抽屉里的导入 / 清空 / 保存不会被顶出可视区。 */
+.side{display:flex;flex-direction:column;gap:13px;min-height:0;overflow:hidden;padding-right:3px}
+.side>.sect{flex:0 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
 .content{display:flex;flex-direction:column;gap:13px;min-height:0}
 .card{background:linear-gradient(180deg,color-mix(in srgb,var(--slab2) 88%,transparent),color-mix(in srgb,var(--slab) 90%,transparent));
   border:1px solid color-mix(in srgb,var(--ink) 7%,transparent);border-radius:16px;
@@ -247,21 +250,34 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;heigh
 .btn-sm.accent{color:var(--c1b);border-color:color-mix(in srgb,var(--c1) 30%,transparent);background:color-mix(in srgb,var(--c1) 8%,transparent)}
 .btn-sm.accent:hover{background:color-mix(in srgb,var(--c1) 15%,transparent)}
 .stack{display:flex;flex-direction:column;gap:9px}
+.sect>.stack{margin-top:16px}
 
-details{border-radius:16px;overflow:hidden}
-details>summary{list-style:none;cursor:pointer;padding:14px 15px;font-size:11.5px;letter-spacing:1.1px;
-  color:var(--t3);text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}
-details>summary::-webkit-details-marker{display:none}
-details>summary::after{content:"";width:6px;height:6px;border-right:1.6px solid var(--t3);border-bottom:1.6px solid var(--t3);
-  transform:rotate(45deg);transition:.22s;margin-right:3px}
-details[open]>summary::after{transform:rotate(-135deg)}
-details>summary:hover{color:var(--t2)}
-.drawer{padding:0 15px 15px;border-top:1px solid color-mix(in srgb,var(--ink) 5.5%,transparent);padding-top:13px}
+/* ---------- 候选抽屉 ----------
+   以前用 <details>，但 Chromium 会把内容包进 ::details-content，
+   展开后里面的 textarea 吃不到剩余高度，按钮容易被挤到可视区外。
+   改成 section + 一个按钮自己折叠，高度才好分配。 */
+.drw{display:flex;flex-direction:column;overflow:hidden;flex:0 0 auto}
+.drw-sum{display:flex;align-items:center;justify-content:space-between;width:100%;
+  padding:14px 15px;border:0;background:transparent;font-family:inherit;font-size:11.5px;
+  letter-spacing:1.1px;color:var(--t3);text-transform:uppercase;cursor:pointer;text-align:left;transition:color .16s}
+.drw-sum::after{content:"";flex:none;width:6px;height:6px;border-right:1.6px solid var(--t3);
+  border-bottom:1.6px solid var(--t3);transform:rotate(45deg);transition:transform .22s;margin-right:3px}
+.drw.open>.drw-sum::after{transform:rotate(-135deg)}
+.drw-sum:hover{color:var(--t2)}
+.drw-sum .n{font-size:10.5px;color:var(--t4);letter-spacing:0;text-transform:none;margin-left:5px}
+.drw>.drawer{display:none;padding:0 15px 15px;padding-top:13px;
+  border-top:1px solid color-mix(in srgb,var(--ink) 5.5%,transparent)}
+/* 展开：吃掉左栏剩余高度，只有文本框跟着伸缩，三个按钮钉在底部 */
+.drw.open{flex:1 1 auto;min-height:150px}
+.drw.open>.drawer{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+.drw.open .imp-wrap{flex:none}
+#cands{flex:1 1 auto;min-height:56px;resize:none}
 
 /* 候选库导入：一行两个按钮 + 弹出菜单（fixed 定位，免得被卡片圆角裁掉） */
-.imp-wrap{position:relative;margin-top:9px}
-.imp-row{display:flex;gap:8px}
-.imp-row .btn-sm{flex:1;text-align:center}
+.imp-wrap{position:relative;margin-top:8px}
+.imp-row{display:flex;gap:7px}
+.imp-row .btn-sm{flex:1;text-align:center;padding:7px 8px}
+.imp-row #btnSave{flex:1.45}
 .imp-menu{position:fixed;z-index:90;display:none;
   padding:6px;border-radius:12px;background:var(--s3);border:1px solid color-mix(in srgb,var(--ink) 14%,transparent);
   box-shadow:0 20px 48px color-mix(in srgb,var(--shadow) 66%,transparent);max-height:60vh;overflow:auto}
@@ -463,11 +479,42 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
   .field{margin-bottom:9px}
   .foot{margin-top:9px}
 }
-@media(max-width:1080px){
-  main{grid-template-columns:1fr;overflow:auto}
-  .side{overflow:visible}
+/* 拖小了：进一步压缩行距，别让左栏内容撑爆 */
+@media(max-height:840px){
+  .sect{padding:11px 12px 12px}
+  .sect h2{margin:0 0 7px;font-size:10.5px}
+  .field{margin-bottom:8px}
+  .hint{font-size:10.5px;line-height:1.5;margin-top:6px}
+  .stack{gap:7px}
+  .drw-sum{padding:11px 13px}
+  .drw.open>.drawer{padding-top:10px}
+  #cands{min-height:44px;line-height:1.5}
+  /* 小高度下先舍掉两条解释性提示（端口说明有 tooltip、退出方式有弹窗兜底），
+     把空间让给候选抽屉，保证导入 / 清空 / 保存一直在 */
+  .sect .hint.opt{display:none}
+}
+/* 再矮就只留关键信息：标题让位，开始/停止改成并排，好让候选抽屉多留几行 */
+@media(max-height:720px){
+  .sect h2{display:none}
+  .sect>.stack{flex-direction:row;margin-top:10px}
+  .sect>.stack>*{flex:1;width:auto;min-width:0}
+  #drawer.open{min-height:146px}
+}
+/* 窗口窄到一列时（拖得很窄 / 高 DPI 缩放下才可能）：回到普通文档流，让整页滚动，
+   而不是把「目标」卡片压成一条缝 */
+@media(max-width:920px){
+  main{grid-template-columns:1fr;grid-auto-rows:max-content;overflow:auto;align-content:start}
+  .side{display:block;overflow:visible;padding-right:0}
+  .side>.sect{overflow:visible;margin-bottom:9px}
+  .drw.open{display:block;min-height:0}
+  .drw.open>.drawer{display:block}
+  #cands{min-height:110px;resize:vertical}
   .board{min-height:420px}
   .kpis{grid-template-columns:repeat(2,1fr)}
+}
+/* 中等宽度：两列还在，但榜单少一列「对比」给域名腾地方 */
+@media(max-width:1040px){
+  .board th:nth-child(6),.board td:nth-child(6){display:none}
 }
 </style>
 </head>
@@ -558,7 +605,7 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
             </div>
           </div>
         </div>
-        <p class="hint" style="margin:-2px 0 11px">只有这 6 个是 CF 代理的 HTTPS 端口。勾几个就同时测几个，同一 IP 不同端口分开计分；客户端里节点的端口要在选中范围内。</p>
+        <p class="hint opt" style="margin:-2px 0 11px">CF 只代理这 6 个 HTTPS 端口，勾几个就并行测几个；客户端里节点的端口要在选中范围内。</p>
         <div class="field">
           <label>地址族</label>
           <div class="seg" id="fam">
@@ -567,31 +614,30 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
             <button data-v="v4">仅 IPv4</button>
           </div>
         </div>
-        <div class="stack" style="margin-top:18px">
+        <div class="stack">
           <button class="btn btn-primary" id="btnRun">开 始 测 速</button>
           <button class="btn btn-ghost" id="btnStop" disabled>停止</button>
         </div>
-        <p class="hint">测速时请先退出代理软件（含 TUN），否则结果不可信。</p>
-        <p class="hint">关掉窗口只是收进托盘（后台继续跑）；要退出请点右上角的 ×。</p>
+        <p class="hint opt">测速前退出代理（含 TUN），否则数据不可信。关窗口只是收进托盘，退出点右上角 ×。</p>
         <p class="offline-tip" id="offlineTip">与测速台断开 —— 程序可能已退出。重新双击 CF-Pick.exe 即可恢复；若已重开仍是这个状态，按 F5 刷新本页。</p>
       </section>
 
-      <details class="card" id="drawer">
-        <summary>候选入口 <span class="n" id="candCount" style="font-size:10.5px;color:var(--t4)">—</span></summary>
-        <div class="drawer">
+      <section class="card drw open" id="drawer">
+        <button type="button" class="drw-sum" id="drwSum" aria-expanded="true" aria-controls="drawerBody">
+          <span>候选入口<span class="n" id="candCount">—</span></span>
+        </button>
+        <div class="drawer" id="drawerBody">
           <textarea id="cands" spellcheck="false" placeholder="一行一个域名或 IP，也可以点下面「导入」"></textarea>
           <div class="imp-wrap">
             <div class="imp-row">
               <button class="btn-sm" id="btnImport">导入 ▾</button>
               <button class="btn-sm" id="btnClear">清空</button>
+              <button class="btn-sm accent" id="btnSave">保存并应用</button>
             </div>
             <div class="imp-menu" id="impMenu"></div>
           </div>
-          <div class="stack" style="margin-top:9px">
-            <button class="btn-sm accent" id="btnSave">保存并应用</button>
-          </div>
         </div>
-      </details>
+      </section>
     </aside>
 
     <section class="content">
@@ -1373,6 +1419,12 @@ $("#btnSave").onclick = async ()=>{
     $("#candCount").textContent = d.count + " 项";
     toast("已保存 " + d.count + " 个候选");
   }catch(e){ toast("保存失败：" + e.message); }
+};
+
+/* 候选抽屉折叠：展开后高度吃满左栏剩余空间，按钮始终钉在底部 */
+$("#drwSum").onclick = ()=>{
+  const on = $("#drawer").classList.toggle("open");
+  $("#drwSum").setAttribute("aria-expanded", on ? "true" : "false");
 };
 
 /* ---------- 候选库导入（域名库 / CF 官方 IP 段 / 各 AS 网段） ---------- */

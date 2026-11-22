@@ -9,6 +9,7 @@ __pycache__/
 CF-Pick.log
 CF-Pick.candidates.txt
 CF-Pick.config.json
+candidates.migrated
 preview*.png
 
 # 编辑器

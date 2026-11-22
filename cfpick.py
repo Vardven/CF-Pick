@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
