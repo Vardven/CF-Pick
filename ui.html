@@ -707,8 +707,8 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 <div class="mask" id="vpnMask">
   <div class="dialog" id="vpnDlg" role="dialog" aria-modal="true">
     <span class="warn" id="vpnTag">环境未就绪</span>
-    <h3 id="vpnTitle">检测到 VPN / 代理正在运行</h3>
-    <p id="vpnText">走代理测出来的是「你到代理」的延迟，不是真实链路，数据不可用。请先关掉系统和代理软件里的代理开关（含 TUN / 全局模式），再重新检测。</p>
+    <h3 id="vpnTitle">代理环境体检</h3>
+    <p id="vpnText">系统代理 / PAC 不影响测速结果（本工具裸 socket 直连），只有 TUN / 虚拟网卡会改变链路 —— 体检结果会显示在这里。</p>
     <ul id="vpnList"></ul>
     <label class="vpn-skip" id="vpnSkipWrap"><input type="checkbox" id="vpnSkip"><span>以后不再提示</span><em>只对系统代理 / 代理进程生效，TUN 仍会拦</em></label>
     <div class="acts">
