@@ -42,7 +42,7 @@ jobs:
           fi
           python -m PyInstaller --noconfirm --clean --onefile --noconsole \
             --name CF-Pick --icon icon.ico $SPLASH \
-            --add-data "ui.html;." --add-data "cf-domains.txt;." cfpick.py
+            --add-data "ui.html;." --add-data "cf-domains.txt;." --add-data "cf-asn.txt;." cfpick.py
 
       - name: Smoke test
         shell: pwsh

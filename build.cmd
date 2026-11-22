@@ -11,7 +11,7 @@ if not exist splash.png python gen_splash.py
 set SPLASH=
 python -c "import tkinter" >nul 2>nul && set SPLASH=--splash "splash.png"
 python -m PyInstaller --noconfirm --onefile --noconsole --name "CF-Pick" ^
-  --icon "icon.ico" %SPLASH% --add-data "ui.html;." --add-data "cf-domains.txt;." cfpick.py
+  --icon "icon.ico" %SPLASH% --add-data "ui.html;." --add-data "cf-domains.txt;." --add-data "cf-asn.txt;." cfpick.py
 if errorlevel 1 (echo [x] 打包失败 & pause & exit /b 1)
 copy /y dist\CF-Pick.exe ..\CF-Pick.exe >nul
 echo.

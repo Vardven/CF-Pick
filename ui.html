@@ -158,6 +158,22 @@ details[open]>summary::after{transform:rotate(-135deg)}
 details>summary:hover{color:#9aa5bb}
 .drawer{padding:0 15px 15px;border-top:1px solid rgba(255,255,255,.055);padding-top:13px}
 
+/* 候选库导入：一行两个按钮 + 弹出菜单（fixed 定位，免得被卡片圆角裁掉） */
+.imp-wrap{position:relative;margin-top:9px}
+.imp-row{display:flex;gap:8px}
+.imp-row .btn-sm{flex:1;text-align:center}
+.imp-menu{position:fixed;z-index:90;display:none;
+  padding:6px;border-radius:12px;background:#0e1524;border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 20px 48px rgba(0,0,0,.66);max-height:60vh;overflow:auto}
+.imp-menu.on{display:block;animation:notein .16s ease both}
+.imp-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:0;border-radius:9px;
+  background:transparent;color:#cfd8e8;font-family:inherit;font-size:12px;text-align:left;cursor:pointer;transition:.14s}
+.imp-item:hover{background:rgba(34,211,238,.1);color:#e8ecf5}
+.imp-item b{display:block;font-weight:600;font-size:12px}
+.imp-item small{display:block;margin-top:2px;font-size:10.5px;color:#6d7891;line-height:1.4}
+.imp-item .c{margin-left:auto;flex:none;font-size:11px;color:#7c869c;
+  background:rgba(255,255,255,.06);padding:2px 7px;border-radius:20px}
+
 /* ---------- kpi ---------- */
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;flex:none}
 .kpi{padding:13px 15px;position:relative;overflow:hidden}
@@ -372,7 +388,14 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
       <details class="card" id="drawer">
         <summary>候选入口 <span class="n" id="candCount" style="font-size:10.5px;color:#5f6a80">—</span></summary>
         <div class="drawer">
-          <textarea id="cands" spellcheck="false" placeholder="一行一个域名或 IP"></textarea>
+          <textarea id="cands" spellcheck="false" placeholder="一行一个域名或 IP，也可以点下面「导入」"></textarea>
+          <div class="imp-wrap">
+            <div class="imp-row">
+              <button class="btn-sm" id="btnImport">导入 ▾</button>
+              <button class="btn-sm" id="btnClear">清空</button>
+            </div>
+            <div class="imp-menu" id="impMenu"></div>
+          </div>
           <div class="stack" style="margin-top:9px">
             <button class="btn-sm accent" id="btnSave">保存并应用</button>
           </div>
@@ -520,6 +543,7 @@ function applyConn(){
     clearTimeout(S.poll);
     $("#btnStop").disabled = true;
     ["sni","port","tries","conc","btnSave"].forEach(id=>{ $("#"+id).disabled = false; });
+    ["btnImport","btnClear"].forEach(id=>{ $("#"+id).disabled = false; });
     document.querySelectorAll("#fam button").forEach(b=>b.disabled = false);
   }
 
@@ -629,6 +653,8 @@ window.addEventListener("focus", ()=>{ if(S.goneQuit) watchRestart(); });
 /* ---------- boot ---------- */
 function applyDemo(){
   $("#sni").value = "";
+  $("#btnImport").disabled = true;
+  $("#btnImport").title = "直接打开 ui.html 时没有后端，导入不可用";
   $("#candCount").textContent = "426 项";
   $("#cands").value = DEMO.map(r=>r.domain).join("\n");
   S.results = DEMO.slice();
@@ -705,6 +731,7 @@ function lockUI(run){
   ["sni","port","tries","conc","btnSave"].forEach(id=>{
     $("#"+id).disabled = run;
   });
+  ["btnImport","btnClear"].forEach(id=>{ $("#"+id).disabled = run; });
   $("#btnRun").disabled = run || !CONN.ok;
   $("#btnStop").disabled = !run;
   document.querySelectorAll("#fam button").forEach(b=>b.disabled = run);
@@ -728,16 +755,16 @@ async function start(){
     if(g.blocked){ showVpn(g.items); return; }
   }catch(e){ /* 体检本身出错就别拦，后端 /api/run 还会再判一次 */ }
 
-  // 候选列表改过就顺手存一下，真正做到一键
+  // 候选列表每次都以后台实际内容为准：先校验非空，再同步过去
+  const list = candList();
+  if(!list.length){ toast("候选列表是空的，先点「导入」或粘贴几行"); return; }
   const text = $("#cands").value.trim();
-  if(text !== (S.candsSaved || "")){
-    try{
-      const sv = await api("/api/candidates", {text});
-      if(!sv.count){ toast("候选列表为空，请先粘贴入口"); return; }
-      S.candsSaved = text;
-      $("#candCount").textContent = sv.count + " 项";
-    }catch(e){ toast("保存候选失败：" + e.message); return; }
-  }
+  try{
+    const sv = await api("/api/candidates", {text});
+    if(!sv.count){ toast("候选列表为空，请先粘贴入口"); return; }
+    S.candsSaved = text;
+    $("#candCount").textContent = sv.count + " 项";
+  }catch(e){ toast("保存候选失败：" + e.message); return; }
 
   S.results = []; S.since = 0; S.done = 0; S.total = 0; S.t0 = Date.now(); S.phase = "resolve";
   render();
@@ -923,6 +950,112 @@ $("#btnSave").onclick = async ()=>{
     toast("已保存 " + d.count + " 个候选");
   }catch(e){ toast("保存失败：" + e.message); }
 };
+
+/* ---------- 候选库导入（域名库 / CF 官方 IP 段 / 各 AS 网段） ---------- */
+let PRESETS = null;
+
+// 菜单挪到 body 下：卡片有圆角裁切 + 滚动容器，留在里面会被裁掉、坐标也会错
+document.body.appendChild($("#impMenu"));
+
+function candList(){
+  return $("#cands").value.split(/\r?\n/).map(s=>s.trim())
+    .filter(s=>s && !s.startsWith("#"));
+}
+
+function refreshCandCount(){
+  const n = new Set(candList().map(s=>s.toLowerCase())).size;
+  $("#candCount").textContent = n + " 项";
+}
+
+function toggleMenu(on){
+  const m = $("#impMenu");
+  const show = (on === undefined) ? !m.classList.contains("on") : on;
+  m.classList.toggle("on", show);
+  $("#btnImport").setAttribute("aria-expanded", show ? "true" : "false");
+  if(show){ fillMenu(); placeMenu(); }
+}
+
+/* 候选入口在左栏最下面，菜单用 fixed 定位：先往下摆，下面放不下就翻到上面 */
+function placeMenu(){
+  const m = $("#impMenu"), b = $("#btnImport");
+  if(!m.classList.contains("on")) return;
+  const wrap = b.closest(".imp-wrap").getBoundingClientRect();
+  m.style.width = Math.round(wrap.width) + "px";
+  m.style.left = Math.round(wrap.left) + "px";
+  m.style.bottom = "auto";
+  m.style.top = Math.round(wrap.bottom + 6) + "px";
+  const box = m.getBoundingClientRect();
+  if(box.bottom > window.innerHeight - 10 && wrap.top - box.height - 6 > 8){
+    m.style.top = Math.round(wrap.top - box.height - 6) + "px";
+  }
+}
+
+function fillMenu(){
+  const menu = $("#impMenu");
+  if(!PRESETS){
+    menu.innerHTML = '<div class="imp-item" style="cursor:default;color:#6d7891">正在读取候选库…</div>';
+    api("/api/presets").then(d=>{
+      PRESETS = d.presets || [];
+      fillMenu();
+      placeMenu();
+    }).catch(e=>{
+      menu.innerHTML = '<div class="imp-item" style="cursor:default;color:#f49090">读取失败：'
+        + e.message + '</div>';
+    });
+    return;
+  }
+  menu.innerHTML = "";
+  PRESETS.forEach(p=>{
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "imp-item";
+    const left = document.createElement("span");
+    left.innerHTML = "<b></b><small></small>";
+    left.querySelector("b").textContent = p.name;
+    left.querySelector("small").textContent = p.note || "";
+    const cnt = document.createElement("span");
+    cnt.className = "c";
+    cnt.textContent = p.count;
+    b.append(left, cnt);
+    b.onclick = ()=> importPreset(p);
+    menu.appendChild(b);
+  });
+}
+
+function importPreset(p){
+  const have = new Set(candList().map(s=>s.toLowerCase()));
+  const lines = candList();
+  let add = 0;
+  (p.items || []).forEach(it=>{
+    const k = String(it).toLowerCase();
+    if(have.has(k)) return;
+    have.add(k); lines.push(String(it)); add++;
+  });
+  $("#cands").value = lines.join("\n");
+  refreshCandCount();
+  toggleMenu(false);
+  toast(add ? `已导入 ${add} 项 · ${p.name}` : "这些条目已经在列表里了");
+}
+
+$("#btnImport").onclick = e => { e.stopPropagation(); toggleMenu(); };
+$("#impMenu").onclick = e => e.stopPropagation();
+document.addEventListener("click", ()=>{ if($("#impMenu").classList.contains("on")) toggleMenu(false); });
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape" && $("#impMenu").classList.contains("on")) toggleMenu(false);
+});
+
+$("#btnClear").onclick = ()=>{
+  if(!$("#cands").value.trim()){ toast("列表已经是空的"); return; }
+  $("#cands").value = "";
+  refreshCandCount();
+  toast("已清空，点「保存并应用」才会写盘");
+};
+
+$("#cands").addEventListener("input", refreshCandCount);
+window.addEventListener("resize", placeMenu);
+window.addEventListener("scroll", ()=>{
+  if($("#impMenu").classList.contains("on")) toggleMenu(false);
+}, true);
 
 $("#btnExit").onclick = async ()=>{
   if(S.running){ try{ await api("/api/stop", {}); }catch(e){} }

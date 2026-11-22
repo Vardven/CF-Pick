@@ -25,6 +25,7 @@ import threading
 import time
 import traceback
 import webbrowser
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -231,20 +232,110 @@ def load_candidates() -> list:
         with open(CAND_FILE, "r", encoding="utf-8", errors="ignore") as f:
             items = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
         if items:
+            # 老版本第一次启动会把内置域名库自动灌进来；那不算用户填的，读到就当没填
+            if items == default_candidates():
+                save_candidates([])
+                return []
             return items
     except Exception:
         pass
-    items = default_candidates()
-    save_candidates(items)
-    return items
+    return []          # 出厂为空：要测什么由使用者自己粘贴或点「导入」
 
 
 def save_candidates(items: list) -> None:
     try:
         with open(CAND_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(items) + "\n")
+            f.write("\n".join(items) + ("\n" if items else ""))
     except Exception:
         pass
+
+
+# --------------------------------------------------------------------------
+# 候选库：界面「导入」里的几套清单（优选域名 / CF 官方网段 / CF 各 AS 网段）
+# --------------------------------------------------------------------------
+def _res_lines(name: str) -> list:
+    for d in (res_dir(), base_dir()):
+        try:
+            with open(os.path.join(d, name), "r", encoding="utf-8", errors="ignore") as f:
+                return [ln.strip() for ln in f]
+        except Exception:
+            continue
+    return []
+
+
+def asn_groups() -> list:
+    """读 cf-asn.txt：`[AS13335] 名称` 起一段，后面每行一个 IPv4 前缀"""
+    groups, cur = [], None
+    for ln in _res_lines("cf-asn.txt"):
+        if not ln or ln.startswith("#"):
+            continue
+        if ln.startswith("["):
+            head, _, tail = ln.partition("]")
+            cur = {"asn": head.strip("[] ").strip(),
+                   "name": tail.lstrip("| ").split("|")[0].strip(), "prefixes": []}
+            groups.append(cur)
+        elif cur is not None:
+            cur["prefixes"].append(ln)
+    return [g for g in groups if g["prefixes"]]
+
+
+def _sprinkle(prefixes, want: int) -> list:
+    """撒点：每轮每个网段取一个地址，不够就再轮一轮（同库每次结果一致）"""
+    nets = []
+    for s in prefixes:
+        try:
+            nets.append(ipaddress.ip_network(s, strict=False))
+        except ValueError:
+            continue
+    if not nets:
+        return []
+    want = max(1, int(want))
+    out, seen = [], set()
+    i = 0
+    while len(out) < want and i < want * 6:
+        net = nets[i % len(nets)]
+        k = i // len(nets)
+        total = net.num_addresses
+        if total <= 1:
+            off = 0
+        elif total == 2:
+            off = k % 2
+        else:
+            off = 1 + (zlib.crc32(("%s#%d" % (net, k)).encode()) % (total - 2))
+        ip = str(net.network_address + off)
+        if ip not in seen:
+            seen.add(ip)
+            out.append(ip)
+        i += 1
+    return out
+
+
+def preset_list() -> list:
+    """导入菜单：每项自带现成的候选条目，前端点一下直接追加"""
+    presets = [{
+        "id": "domains",
+        "name": "优选域名库",
+        "note": "内置在用的 CF 优选域名，直接测",
+        "items": default_candidates(),
+    }]
+    presets.append({
+        "id": "cf_official",
+        "name": "CF 官方 IP 段",
+        "note": "官方公布的 %d 个边缘网段，每段撒点" % len(CF_RANGES),
+        "items": _sprinkle(CF_RANGES, 66),
+    })
+    for g in asn_groups():
+        want = {"AS13335": 150, "AS209242": 60, "AS395747": 40}.get(g["asn"], 30)
+        items = _sprinkle(g["prefixes"], want)
+        presets.append({
+            "id": g["asn"].lower(),
+            "name": "%s 网段" % g["asn"],
+            "note": "%s · %d 个 IPv4 段" % (g["name"] or "Cloudflare", len(g["prefixes"])),
+            "items": items,
+        })
+    for p in presets:
+        p["count"] = len(p["items"])
+    return presets
 
 
 # --------------------------------------------------------------------------
@@ -814,10 +905,14 @@ class Handler(BaseHTTPRequestHandler):
             snap = snapshot()
             return self._json({
                 "config": load_cfg(),
-                "candidates": load_candidates(),
+                # 候选入口每次打开都是空白，要测什么由使用者自己导入或粘贴
+                "candidates": [],
                 "version": VERSION,
                 **snap,
             })
+        if p == "/api/presets":
+            # 候选库（域名库 / 官方网段 / 各 AS 网段），条目现成算好随列表一起给
+            return self._json({"presets": preset_list()})
         if p == "/api/progress":
             qs = u.query
             since = 0
