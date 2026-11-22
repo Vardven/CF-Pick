@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -209,6 +209,7 @@ DEFAULT_CFG = {
     "max_ips": 2,
     "auto_open": True,
     "theme": "dark",        # dark / light / cb（色盲友好）
+    "skip_env_check": False,  # 只对「系统代理 / 代理进程」这类软提示生效，TUN 永远拦
 }
 
 
@@ -853,21 +854,36 @@ def _proxy_processes() -> list:
 
 
 def env_check() -> dict:
-    """测速前的环境体检：有任一条命中就拦下，别让代理污染数据。"""
-    items = []
+    """测速前的环境体检。
+
+    分两档，只有真正会改路径的才拦：
+
+    * hard —— TUN / 虚拟网卡。流量在路由层被抓进隧道，测出来是「到代理」的延迟，
+      必须关掉才能测，绕不过去（后端也会拦，直接调接口同样不行）。
+    * soft —— 系统代理 / PAC / WinHTTP / 代理进程。本工具用裸 socket 直连候选 IP，
+      这几样只是给浏览器之类「愿意遵守的软件」用的，不会改变它走的路，数据依然有效。
+      常年挂着 v2rayN / Clash 的人被它们挡住完全没道理，所以只提示一次，
+      界面上给「仍要测速」和「以后不再提示」两个出口。
+    """
+    hard, soft = [], []
     ie = _ie_proxy_state()
     if ie.get("enable") and ie.get("server"):
-        items.append({"kind": "system_proxy", "label": "系统代理已开启：" + ie["server"]})
+        soft.append({"kind": "system_proxy", "label": "系统代理已开启：" + ie["server"]})
     if ie.get("pac"):
-        items.append({"kind": "pac", "label": "已配置 PAC 自动代理：" + ie["pac"]})
+        soft.append({"kind": "pac", "label": "已配置 PAC 自动代理：" + ie["pac"]})
     wh = _winhttp_proxy()
     if wh:
-        items.append({"kind": "winhttp", "label": "WinHTTP 代理：" + wh})
+        soft.append({"kind": "winhttp", "label": "WinHTTP 代理：" + wh})
     for a in _tunnel_adapters():
-        items.append({"kind": "adapter", "label": "虚拟网卡 / 隧道：" + a})
+        hard.append({"kind": "adapter", "label": "虚拟网卡 / 隧道：" + a})
     for p in _proxy_processes():
-        items.append({"kind": "process", "label": "代理程序在运行：" + p})
-    return {"blocked": bool(items), "items": items}
+        soft.append({"kind": "process", "label": "代理程序在运行：" + p})
+    try:
+        skip = bool(load_cfg().get("skip_env_check"))
+    except Exception:
+        skip = False
+    return {"blocked": bool(hard), "hard": hard, "soft": soft,
+            "items": hard + soft, "skip": skip}
 
 
 # --------------------------------------------------------------------------
@@ -1056,11 +1072,16 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/run":
             cfg = load_cfg()
             probe = env_check()
-            if probe["blocked"]:                 # 后端再兜一次，防止直接调接口绕过
+            ignore = bool(body.get("ignore_env")) or bool(cfg.get("skip_env_check"))
+            # TUN 会真的改路径，任何时候都拦；系统代理这类软提示只挡第一次（除非用户点了「仍要测速」）
+            if probe["blocked"] or (probe["soft"] and not ignore):
                 log("run blocked: proxy in use -> " +
                     "; ".join(i["label"] for i in probe["items"]))
                 return self._json({"error": "检测到 VPN / 代理正在运行，请先关闭再测速",
-                                   "blocked": True, "items": probe["items"]})
+                                   "blocked": True,
+                                   "items": probe["items"],
+                                   "hard": probe["hard"],
+                                   "soft": probe["soft"]})
             try:
                 cfg["sni"] = str(body.get("sni") or "").strip()
                 cfg["port"] = max(1, min(65535, int(body.get("port") or DEFAULT_PORT)))
@@ -1090,6 +1111,12 @@ class Handler(BaseHTTPRequestHandler):
             cfg["theme"] = th
             save_cfg(cfg)
             return self._json({"theme": th})
+        if p == "/api/env-skip":
+            # 勾了「以后不再提示」：软提示（系统代理 / 代理进程）以后直接放行
+            cfg = load_cfg()
+            cfg["skip_env_check"] = bool(body.get("on"))
+            save_cfg(cfg)
+            return self._json({"skip": cfg["skip_env_check"]})
         if p == "/api/win":
             # 自绘标题栏用：最小化 / 最大化 / 拖动 / 拉边框
             act = str(body.get("action") or "")

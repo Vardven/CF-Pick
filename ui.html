@@ -428,6 +428,16 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 .dialog li::before{content:"·";color:var(--warnx);font-weight:700;margin-right:7px}
 .dialog .acts{display:flex;gap:9px;justify-content:flex-end;margin-top:16px}
 
+/* 软提示（系统代理 / 代理进程）：不改变直连 socket 的路径，只提醒一句，样式从「警告」降成「提示」 */
+.dialog.soft{border-color:color-mix(in srgb,var(--c1) 28%,transparent)}
+.dialog.soft .warn{color:var(--c1b);background:color-mix(in srgb,var(--c1) 10%,transparent);
+  border-color:color-mix(in srgb,var(--c1) 30%,transparent)}
+.dialog.soft li::before{color:var(--c1)}
+.vpn-skip{display:none;align-items:baseline;gap:7px;margin:13px 0 0;font-size:11.5px;color:var(--t2);cursor:pointer}
+.vpn-skip.on{display:flex}
+.vpn-skip input{accent-color:var(--c1);margin:0;transform:translateY(1px)}
+.vpn-skip em{font-style:normal;color:var(--t4);font-size:10.5px;line-height:1.5}
+
 /* 内嵌窗口默认 900 高，屏幕不够高时把左栏收紧一点，让「保存并应用」也露出来 */
 @media(max-height:980px){
   main{gap:13px}
@@ -630,14 +640,16 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 </div>
 
 <div class="mask" id="vpnMask">
-  <div class="dialog" role="dialog" aria-modal="true">
-    <span class="warn">环境未就绪</span>
-    <h3>检测到 VPN / 代理正在运行</h3>
-    <p>走代理测出来的是「你到代理」的延迟，不是真实链路，数据不可用。请先关掉系统和代理软件里的代理开关（含 TUN / 全局模式），再重新检测。</p>
+  <div class="dialog" id="vpnDlg" role="dialog" aria-modal="true">
+    <span class="warn" id="vpnTag">环境未就绪</span>
+    <h3 id="vpnTitle">检测到 VPN / 代理正在运行</h3>
+    <p id="vpnText">走代理测出来的是「你到代理」的延迟，不是真实链路，数据不可用。请先关掉系统和代理软件里的代理开关（含 TUN / 全局模式），再重新检测。</p>
     <ul id="vpnList"></ul>
+    <label class="vpn-skip" id="vpnSkipWrap"><input type="checkbox" id="vpnSkip"><span>以后不再提示</span><em>只对系统代理 / 代理进程生效，TUN 仍会拦</em></label>
     <div class="acts">
       <button class="btn-sm" id="vpnClose">知道了</button>
-      <button class="btn-sm accent" id="vpnRetry">重新检测</button>
+      <button class="btn-sm" id="vpnRetry">重新检测</button>
+      <button class="btn-sm accent" id="vpnGo">仍要测速</button>
     </div>
   </div>
 </div>
@@ -700,7 +712,7 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 "use strict";
 const $ = s => document.querySelector(s);
 const S = { running:false, done:0, total:0, since:0, t0:0, results:[], usable:[], family:"auto", poll:null,
-            minimized:false, goneQuit:false, reopen:0, endpoint:"" };
+            minimized:false, goneQuit:false, reopen:0, endpoint:"", envSkip:false };
 const MAXROWS = 20;
 const DEMO = [{"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:8390::395e:9f27", "ms": 301, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 304, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 314, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 316, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:91b4::aaa5:d6c1", "ms": 317, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 320, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:9b08::93e7:7adb", "ms": 322, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:99e6::1f00:5835", "ms": 323, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:99e4::4f5e:9096", "ms": 326, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9a68::1252:a6df", "ms": 327, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 329, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:91b1::c25a:fef2", "ms": 331, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 336, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9c67::76fc:1039", "ms": 358, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "bbs.alipansou.com", "family": "v4", "ip": "104.25.244.197", "ms": 485, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "eii.at", "family": "v4", "ip": "104.25.244.197", "ms": 488, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "mokeedev.com", "family": "v4", "ip": "172.66.134.83", "ms": 492, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf-ip-site.vov.moe", "family": "v4", "ip": "172.66.216.230", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "224322.xyz", "family": "v4", "ip": "104.25.245.13", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.jwcmdr.top", "family": "v4", "ip": "104.25.255.40", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "skk.moe", "family": "v4", "ip": "172.66.132.196", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.mfyx.cn", "family": "v4", "ip": "104.25.240.121", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.5h.com", "family": "v4", "ip": "172.66.137.209", "ms": 497, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.1o.ee", "family": "v4", "ip": "172.66.128.235", "ms": 499, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}];
 
@@ -1015,6 +1027,7 @@ async function boot(){
       $("#svcAddr").textContent = d.endpoint;
       $("#chipSvc").hidden = false;
     }
+    S.envSkip = !!(d.config && d.config.skip_env_check);
     $("#sni").value = d.config.sni || "";
     $("#port").value = setPort(d.config.port);
     $("#tries").value = d.config.tries || 2;
@@ -1067,7 +1080,7 @@ function lockUI(run){
   else if(CHIP === "run" || CHIP === "done") setChip(CONN.ok ? "ok" : "off");
 }
 
-async function start(){
+async function start(ignoreEnv){
   const sni = $("#sni").value.trim();
   if(!sni){ sniHint("empty"); return; }
   if(/^[a-z][a-z0-9+.-]*:\/\//i.test(sni) || /[\/\s]/.test(sni)){
@@ -1077,10 +1090,11 @@ async function start(){
   const tries = Math.min(10, Math.max(1, parseInt($("#tries").value)||2));
   const conc  = Math.min(64, Math.max(4, parseInt($("#conc").value)||32));
 
-  // 先体检：代理/VPN 开着测出来的数是假的，直接拦下
+  // 先体检：TUN 会改路径必须拦；系统代理 / 代理进程只是提示，可以「仍要测速」放行
   try{
     const g = await api("/api/check-env");
-    if(g.blocked){ showVpn(g.items); return; }
+    if(g.blocked){ showVpn((g.hard && g.hard.length) ? g.hard : g.items, true); return; }
+    if(!ignoreEnv && !S.envSkip && (g.soft || []).length){ showVpn(g.soft, false); return; }
   }catch(e){ /* 体检本身出错就别拦，后端 /api/run 还会再判一次 */ }
 
   // 候选列表每次都以后台实际内容为准：先校验非空，再同步过去
@@ -1097,9 +1111,11 @@ async function start(){
   S.results = []; S.since = 0; S.done = 0; S.total = 0; S.t0 = Date.now(); S.phase = "resolve";
   render();
   try{
-    const d = await api("/api/run", {sni, port, tries, concurrency:conc, family:S.family});
+    const d = await api("/api/run", {sni, port, tries, concurrency:conc, family:S.family,
+                                     ignore_env: !!ignoreEnv});
     if(d.error){
-      if(d.blocked) showVpn(d.items); else toast(d.error);
+      if(d.blocked) showVpn((d.hard && d.hard.length) ? d.hard : d.items, !(d.soft && d.soft.length && !d.hard));
+      else toast(d.error);
       return;
     }
     S.total = d.total; S.running = true;
@@ -1122,7 +1138,10 @@ function sniHint(why){
 }
 
 /* ---------- 代理拦截弹窗 ---------- */
-function showVpn(items){
+/* ---------- 代理体检弹窗 ----------
+   hard = TUN / 虚拟网卡：真的会改路径，只给「知道了 / 重新检测」
+   soft = 系统代理 / PAC / 代理进程：裸 socket 直连不受影响，多给「仍要测速」和「以后不再提示」 */
+function showVpn(items, hard){
   const ul = $("#vpnList");
   ul.textContent = "";
   (items || []).forEach(it=>{
@@ -1130,6 +1149,17 @@ function showVpn(items){
     li.textContent = typeof it === "string" ? it : (it.label || "");
     ul.appendChild(li);
   });
+  $("#vpnDlg").classList.toggle("soft", !hard);
+  $("#vpnTag").textContent = hard ? "环境未就绪" : "提示";
+  $("#vpnTitle").textContent = hard ? "检测到 TUN / 虚拟网卡正在运行"
+                                    : "检测到代理在运行（不影响直连测速）";
+  $("#vpnText").innerHTML = hard
+    ? "TUN 在路由层把全部流量抓进隧道，测出来是「你 → 代理」的延迟，不是真实链路。请关掉代理软件的 TUN / 全局模式，或直接退出代理，再点「重新检测」。"
+    : "本工具用裸 socket 直连候选 IP，系统代理 / PAC 只对愿意遵守它的软件生效，不会改变这里的路径 —— 数据依然有效。<b>只有开了 TUN 或全局虚拟网卡才会失真</b>，那种情况会单独拦下来。";
+  $("#vpnSkipWrap").classList.toggle("on", !hard);
+  $("#vpnGo").hidden = !!hard;
+  $("#vpnSkip").checked = false;
+  $("#vpnRetry").classList.toggle("accent", !!hard);
   $("#vpnMask").classList.add("on");
 }
 function hideVpn(){ $("#vpnMask").classList.remove("on"); }
@@ -1246,7 +1276,7 @@ $("#btnCopy").onclick = async ()=>{
 
 $("#btnCsv").onclick = ()=>{ window.location.href = "/api/export.csv"; };
 
-$("#btnRun").onclick = start;
+$("#btnRun").onclick = () => start();   // 别直接挂 start：onclick 会把 Event 当第一个参数传进去
 $("#btnStop").onclick = stop;
 
 $("#sniHelp").onclick = e => { e.preventDefault(); $("#sniNote").classList.toggle("on"); };
@@ -1264,10 +1294,24 @@ $("#vpnRetry").onclick = async ()=>{
   btn.disabled = true; btn.textContent = "检测中…";
   try{
     const g = await api("/api/check-env");
-    if(g.blocked){ showVpn(g.items); toast("仍有代理 / VPN 在运行"); }
-    else { hideVpn(); toast("环境已就绪，开始测速"); start(); }
+    if(g.blocked){
+      showVpn((g.hard && g.hard.length) ? g.hard : g.items, true);
+      toast("TUN 还开着，先关掉再试");
+    }else if(!S.envSkip && (g.soft || []).length){
+      showVpn(g.soft, false);
+      toast("代理还开着，可以直接点「仍要测速」");
+    }else{
+      hideVpn(); toast("环境已就绪，开始测速"); start(true);
+    }
   }catch(e){ toast("检测失败：" + e.message); }
   finally{ btn.disabled = false; btn.textContent = old; }
+};
+$("#vpnGo").onclick = async ()=>{
+  if($("#vpnSkip").checked){
+    try{ const r = await api("/api/env-skip", {on:true}); S.envSkip = !!r.skip; }catch(e){}
+  }
+  hideVpn();
+  start(true);
 };
 
 $("#btnSave").onclick = async ()=>{
