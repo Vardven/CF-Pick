@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -282,20 +282,47 @@ def load_candidates() -> list:
         with open(CAND_FILE, "r", encoding="utf-8", errors="ignore") as f:
             items = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
         if items:
-            # 老版本第一次启动会把内置域名库自动灌进来；那不算用户填的，读到就当没填
-            if items == default_candidates():
-                save_candidates([])
-                return []
             return items
     except Exception:
         pass
-    return []          # 出厂为空：要测什么由使用者自己粘贴或点「导入」
+    return []          # 文件不存在 / 空：要测什么由使用者自己粘贴或点「导入」
 
 
 def save_candidates(items: list) -> None:
     try:
         with open(CAND_FILE, "w", encoding="utf-8") as f:
             f.write("\n".join(items) + ("\n" if items else ""))
+    except Exception:
+        pass
+
+
+# 一个数据目录只做一次的「旧候选迁移」标记
+CAND_MARK = os.path.join(DATA, "candidates.migrated")
+
+
+def candidates_boot_init() -> None:
+    """老版本第一次启动会自动把内置域名库写进候选文件，升级上来的用户会平白多出
+    整份内置清单从没选过的候选。这里只在「这个数据目录第一次跑新版」时清一次，并落一个
+    标记文件；之后用户自己点「导入 → 优选域名库」写进去的同名清单必须原样保留。
+
+    早期实现把这套判断塞在 load_candidates() 里，等于每次开测都拿当前内容和内置
+    清单比对，一旦相等就把文件清空 —— 于是用户导入优选域名库后一按「开始测速」就
+    必现「候选列表为空」。迁移必须只发生一次，且绝不能发生在读路径上。
+    """
+    try:
+        if os.path.exists(CAND_MARK):
+            return
+        if os.path.exists(CAND_FILE):
+            try:
+                with open(CAND_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                    items = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+                if items and items == default_candidates():
+                    save_candidates([])
+                    log("candidates: dropped built-in library inherited from old version")
+            except Exception:
+                pass
+        with open(CAND_MARK, "w", encoding="utf-8") as f:
+            f.write("1")
     except Exception:
         pass
 
@@ -632,7 +659,7 @@ def start_run(cfg) -> dict:
     if not items:
         with STATE.lock:
             STATE.running = False
-        return {"error": "候选列表为空"}
+        return {"error": "候选列表是空的，先点「导入」或粘贴几行入口"}
 
     def work():
         try:
@@ -2795,6 +2822,7 @@ def main():
         log("second instance: 未找到已在运行的实例，改为自行启动")
 
     splash_progress(0.28, "正在载入界面…")
+    candidates_boot_init()             # 只在本次数据目录第一次启动时做旧候选迁移
     load_ui()
 
     srv = None

@@ -896,14 +896,14 @@ function applyDemo(){
   $("#sni").value = "";
   $("#btnImport").disabled = true;
   $("#btnImport").title = "直接打开 ui.html 时没有后端，导入不可用";
-  $("#candCount").textContent = "426 项";
+  $("#candCount").textContent = "414 项";
   $("#cands").value = DEMO.map(r=>r.domain).join("\n");
   S.results = DEMO.slice();
   S.done = 1351; S.total = 1351; S.t0 = Date.now() - 75000;
   render();
   $("#fill").style.width = "100%";
   $("#progPct").textContent = "100%";
-  $("#progText").innerHTML = "演示数据 · 候选 <b>426</b> 个";
+  $("#progText").innerHTML = "演示数据 · 候选 <b>414</b> 个";
   $("#chip").className = "chip ok";
   $("#chipText").textContent = "演示";
   $("#boardNote").textContent = "演示榜单";
@@ -1089,7 +1089,7 @@ async function start(){
   const text = $("#cands").value.trim();
   try{
     const sv = await api("/api/candidates", {text});
-    if(!sv.count){ toast("候选列表为空，请先粘贴入口"); return; }
+    if(!sv.count){ toast("候选列表是空的，先点「导入」或粘贴几行入口"); return; }
     S.candsSaved = text;
     $("#candCount").textContent = sv.count + " 项";
   }catch(e){ toast("保存候选失败：" + e.message); return; }

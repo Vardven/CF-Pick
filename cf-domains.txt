@@ -31,7 +31,6 @@ img.dexbug.com
 upfile.live
 t.213891.xyz
 gateway.ipfsscan.io
-xn--b6gac.eu.org
 hashi.sbs
 cdn.violet.vin
 mfa.gov.ua
@@ -56,7 +55,6 @@ cdn.nodeimage.com
 ali.nonull.pp.ua
 iili.io
 store.ubi.com
-yxip.xxxxxxxx.tk
 singapore.com
 www.speedtest.net
 fbi.gov
@@ -84,7 +82,6 @@ saas.sin.fan
 p.etime.vip
 cdn.204910.best
 www.visa.com.au
-cloudflare.idc.rocks
 egov.uscis.gov
 debot.ai
 constitution.congress.gov
@@ -208,7 +205,6 @@ easylist.to
 www.doiting.com
 www.meteorelectrical.com
 www.maxcom.de
-d.lma.de5.net
 dexari.com
 crinacle.com
 zoominfo.com
@@ -249,8 +245,6 @@ mox.moxing.lol
 kniu.cc
 cdn.7zz.cn
 eii.at
-so.360832.xyz
-cmcc.cc.cd
 seo.07yue.com
 www.6i5.com
 www.bangbenjiaju.com
@@ -264,13 +258,11 @@ investor.apple.com
 op.chinwa.eu.cc
 cdn.091224.xyz
 jellyfin.roddy.eu.cc
-01-cctv.com
 uspto.gov
 www.gov.il
 www.acces-maroc.ma
 www.lbl.gov
 markmonitor.com
-01-qq.com
 www.apnic.net
 ys2046.cv
 shabak.gov.il
@@ -307,9 +299,7 @@ chrono24.com
 api.gzcrtw.com
 jojolsj.jojojing.top
 salaryexpert.com
-www.xflash.vip
 www.vastnovel.com
-zmxf.qzz.io
 glitterx.cloud
 auto.dolby.dpdns.org
 www.dg22.top
@@ -340,13 +330,11 @@ kick.com
 cm.edu.kg
 griditapp.com
 worldvectorlogo.com
-cf.xycf.asia
 macked.app
 appstorrent.ru
 neko.cloudflaree.eu.org
 www.mediafire.com
 img.856518.xyz
-ex.warspite.dpdns.org
 www2.rarbggo.to
 rargb.to
 nodejs.org
