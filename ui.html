@@ -76,6 +76,17 @@ input[type=text],input[type=number],textarea{
   width:100%;padding:9px 11px;border-radius:10px;font-size:13px;color:#e8ecf5;
   background:rgba(8,11,19,.72);border:1px solid rgba(255,255,255,.09);outline:none;
   font-family:inherit;transition:border-color .18s,box-shadow .18s,background .18s}
+select{
+  width:100%;padding:9px 30px 9px 11px;border-radius:10px;font-size:13px;color:#e8ecf5;
+  background-color:rgba(8,11,19,.72);border:1px solid rgba(255,255,255,.09);outline:none;
+  font-family:inherit;cursor:pointer;appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b95ab' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;
+  transition:border-color .18s,box-shadow .18s,background-color .18s}
+select:hover{border-color:rgba(255,255,255,.18)}
+select:focus{border-color:rgba(34,211,238,.55);box-shadow:0 0 0 3px rgba(34,211,238,.1);background-color:rgba(8,11,19,.95)}
+select:disabled{opacity:.55;cursor:default}
+select option{background:#101728;color:#e8ecf5}
 input:focus,textarea:focus{border-color:rgba(34,211,238,.55);box-shadow:0 0 0 3px rgba(34,211,238,.1);background:rgba(8,11,19,.95)}
 input:disabled{opacity:.55}
 textarea{resize:vertical;min-height:118px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:1.65}
@@ -318,14 +329,22 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
         </div>
         <div class="row">
           <div class="field">
-            <label>端口</label>
-            <input type="number" id="port" value="443" min="1" max="65535">
+            <label for="port" title="Cloudflare 只代理这几个 HTTPS 端口，优选就在这些端口上做">端口</label>
+            <select id="port" title="Cloudflare 只代理这几个 HTTPS 端口">
+              <option value="443" selected>443（默认）</option>
+              <option value="8443">8443</option>
+              <option value="2053">2053</option>
+              <option value="2083">2083</option>
+              <option value="2087">2087</option>
+              <option value="2096">2096</option>
+            </select>
           </div>
           <div class="field">
             <label>每项测几次</label>
             <input type="number" id="tries" value="2" min="1" max="10">
           </div>
         </div>
+        <p class="hint" style="margin:-2px 0 11px">只能选 CF 代理的 HTTPS 端口（就这 6 个）。客户端里节点的端口要跟这里保持一致。</p>
         <div class="field">
           <label>地址族</label>
           <div class="seg" id="fam">
@@ -623,13 +642,27 @@ function applyDemo(){
   $("#boardNote").textContent = "演示榜单";
 }
 
+/* 端口下拉：CF 只代理 443/8443/2053/2083/2087/2096 这几个 HTTPS 端口。
+   老配置里存过别的端口就临时补一个选项，别把人家填的值悄悄改成 443 */
+function setPort(v){
+  const sel = $("#port");
+  const n = parseInt(v, 10) || 443;
+  if(![...sel.options].some(o => o.value === String(n))){
+    const o = document.createElement("option");
+    o.value = String(n); o.textContent = n + "（自定义）";
+    sel.appendChild(o);
+  }
+  sel.value = String(n);
+  return String(n);
+}
+
 async function boot(){
   if(location.protocol === "file:"){ applyDemo(); return; }
   startBeat();
   try{
     const d = await api("/api/init");
     $("#sni").value = d.config.sni || "";
-    $("#port").value = d.config.port || 443;
+    $("#port").value = setPort(d.config.port);
     $("#tries").value = d.config.tries || 2;
     $("#conc").value = d.config.concurrency || 32;
     $("#concOut").textContent = $("#conc").value;
