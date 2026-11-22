@@ -1789,10 +1789,29 @@ def _app_loaded():
 
 
 def _dress_app_window() -> None:
-    """窗口出来后补两件事：深色标题栏、程序图标（WinForms 默认是占位图标）。"""
+    """窗口出来后补三件事：夹进工作区、深色标题栏、程序图标（WinForms 默认是占位图标）。"""
     hwnd = app_hwnd()
     if not hwnd:
         return
+    try:
+        # pywebview 是按整块屏幕居中的，遇到任务栏不在「隐藏」状态时底边会压上去
+        u32 = ctypes.windll.user32
+        r, wa = wintypes.RECT(), wintypes.RECT()
+        u32.GetWindowRect(hwnd, ctypes.byref(r))
+        if u32.SystemParametersInfoW(0x0030, 0, ctypes.byref(wa), 0):
+            dx = dy = 0
+            if r.bottom > wa.bottom:
+                dy = wa.bottom - r.bottom
+            if r.right > wa.right:
+                dx = wa.right - r.right
+            if r.top + dy < wa.top:
+                dy = wa.top - r.top
+            if r.left + dx < wa.left:
+                dx = wa.left - r.left
+            if dx or dy:
+                u32.SetWindowPos(hwnd, None, r.left + dx, r.top + dy, 0, 0, 0x0001 | 0x0004)
+    except Exception:
+        pass
     try:
         icon = _tray_icon()
         if icon:
@@ -1812,16 +1831,21 @@ def _dress_app_window() -> None:
 
 
 def _app_size() -> tuple:
-    """窗口尺寸按屏幕来，别在小本子上开出一个超屏的大窗。"""
+    """窗口尺寸按「可用工作区」来（扣掉任务栏），小本子上也不会超出屏幕。"""
     try:
         u = ctypes.windll.user32
-        sw, sh = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+        rc = wintypes.RECT()
+        if u.SystemParametersInfoW(0x0030, 0, ctypes.byref(rc), 0):   # SPI_GETWORKAREA
+            sw, sh = rc.right - rc.left, rc.bottom - rc.top
+        else:
+            sw, sh = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
         s = _dpi_scale()
-        w = int(min(1240, sw / s - 90))
-        h = int(min(900, sh / s - 130))
-        return max(980, w), max(640, h)
+        # 传进去的是内容区尺寸，标题栏 + 边框还得另算，所以留 46 的余量
+        w = int(min(1240, sw / s - 60))
+        h = int(min(900, sh / s - 46))
+        return max(960, w), max(620, h)
     except Exception:
-        return 1240, 900
+        return 1240, 860
 
 
 def embed_start(port: int) -> bool:
