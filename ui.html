@@ -8,7 +8,8 @@
 <style>
 /* ==========================================================================
    主题层：页面里所有颜色都走变量，换主题只换这一块
-   dark = 现在的深色；light = 亮色；cb = 色盲友好（Okabe-Ito 配色，蓝=可用 / 橙=不可用）
+   dark = 深色（青紫）；light = 亮色；pink = 粉；orange = 橙
+   pink / orange 仍是深色底，只换主色调与底纹，可用 / 不可用仍是绿 / 红
    ========================================================================== */
 :root{
   color-scheme:dark;
@@ -33,13 +34,25 @@
   --ink:#0b1220;--slab:#ffffff;--slab0:#ffffff;--slab2:#f2f6fc;--shadow:rgba(19,32,55,.20);
   --on-accent:#ffffff;
 }
-:root[data-theme="cb"]{
-  --c1:#7cc7ee;--c1b:#a8dbf5;--c1c:#cbeaf9;
-  --c2:#b291dd;--c2b:#cdb6ea;--c2c:#967fcb;--c3:#d58fb8;
-  --ok:#3b82f6;--okb:#93c5fd;
-  --warn:#f0c419;--warnb:#f8e07a;--warnc:#e0b400;--warnx:#e8a13c;
-  --bad:#e07020;--badb:#c25b12;--badc:#f0904f;--badL:#f7d6ba;--bad2:#d4671d;
-  --on-accent:#06141d;
+:root[data-theme="pink"]{
+  --s0:#0d0710;--s1:#100810;--s2:#170d18;--s3:#1d1220;--s4:#251828;
+  --t1:#f8eaf2;--t15:#e6d0dd;--t2:#c6aabb;--t3:#9e8494;--t4:#76636f;--t5:#4f4149;
+  --c1:#f472b6;--c1b:#f9a8d4;--c1c:#fbcfe8;
+  --c2:#c084fc;--c2b:#d8b4fe;--c2c:#a855f7;--c3:#fb7185;
+  --ok:#34d399;--okb:#6ee7b7;
+  --warn:#fbbf24;--warnb:#fcd34d;--warnc:#f59e0b;--warnx:#f0a97a;
+  --bad:#fca5a5;--badb:#f87171;--badc:#fb7185;--badL:#fecaca;--bad2:#f49090;
+  --ink:#ffffff;--slab:#0f0711;--slab0:#0a050b;--slab2:#251629;--shadow:#000000;--on-accent:#2b0a1d;
+}
+:root[data-theme="orange"]{
+  --s0:#0c0806;--s1:#0f0a07;--s2:#150e09;--s3:#1b120c;--s4:#231811;
+  --t1:#f9efe6;--t15:#e8d5c4;--t2:#cbb09a;--t3:#a68a72;--t4:#7d6651;--t5:#544534;
+  --c1:#fb923c;--c1b:#fdba74;--c1c:#fed7aa;
+  --c2:#facc15;--c2b:#fde047;--c2c:#eab308;--c3:#f87171;
+  --ok:#4ade80;--okb:#86efac;
+  --warn:#fbbf24;--warnb:#fde68a;--warnc:#f59e0b;--warnx:#fdba74;
+  --bad:#fca5a5;--badb:#f87171;--badc:#fb7185;--badL:#fecaca;--bad2:#f49090;
+  --ink:#ffffff;--slab:#0e0906;--slab0:#090604;--slab2:#241811;--shadow:#000000;--on-accent:#261405;
 }
 *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
 html,body{height:100%;margin:0}
@@ -125,7 +138,8 @@ h1 b{background:linear-gradient(92deg,var(--c1b),var(--c2) 60%,var(--c3));-webki
 .sw{width:28px;height:18px;border-radius:6px;flex:none;border:1px solid color-mix(in srgb,var(--ink) 15%,transparent)}
 .sw.d{background:linear-gradient(135deg,#0b1120 0 45%,#22d3ee 45% 72%,#a78bfa 72%)}
 .sw.l{background:linear-gradient(135deg,#ffffff 0 45%,#0e7490 45% 72%,#6d28d9 72%)}
-.sw.c{background:linear-gradient(135deg,#0b1120 0 45%,#3b82f6 45% 72%,#e07020 72%)}
+.sw.p{background:linear-gradient(135deg,#170d18 0 45%,#f472b6 45% 72%,#c084fc 72%)}
+.sw.o{background:linear-gradient(135deg,#150e09 0 45%,#fb923c 45% 72%,#facc15 72%)}
 
 /* 无边框窗口的八向缩放热区（只有内嵌窗口才显示） */
 .rz{position:fixed;z-index:95;display:none}
@@ -519,7 +533,7 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 </style>
 </head>
 <body>
-<script>try{var t=localStorage.getItem("cfpick.theme");if(t==="light"||t==="cb"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script>try{var t=localStorage.getItem("cfpick.theme");if(t==="light"||t==="pink"||t==="orange"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
 <div class="app">
   <header>
     <div class="brand">
@@ -543,9 +557,10 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
             <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.9-.8 1.9-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.9-1.8h1.3A4.9 4.9 0 0 0 21 10.1C21 6.2 17 3 12 3Z"/><circle cx="8.1" cy="9.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="12" cy="7.5" r="1.05" fill="currentColor" stroke="none"/><circle cx="15.9" cy="9.4" r="1.05" fill="currentColor" stroke="none"/><circle cx="8.6" cy="13.4" r="1.05" fill="currentColor" stroke="none"/></svg>
           </button>
           <div class="theme-menu" id="themeMenu" role="menu">
-            <button type="button" data-theme="dark"><span class="sw d"></span>暗色<small>默认</small></button>
+            <button type="button" data-theme="dark"><span class="sw d"></span>暗色<small>青 / 紫</small></button>
             <button type="button" data-theme="light"><span class="sw l"></span>亮色<small>白天用</small></button>
-            <button type="button" data-theme="cb"><span class="sw c"></span>色盲友好<small>蓝 / 橙</small></button>
+            <button type="button" data-theme="pink"><span class="sw p"></span>粉色<small>玫红</small></button>
+            <button type="button" data-theme="orange"><span class="sw o"></span>橙色<small>暖金</small></button>
           </div>
         </div>
         <button class="icon-btn" id="btnMax" title="最大化 / 还原">
@@ -1022,9 +1037,9 @@ $("#ports").addEventListener("click", e=>{
   refreshPortNote();
 });
 
-/* ---------- 主题：暗色 / 亮色 / 色盲友好 ---------- */
-const THEMES = ["dark", "light", "cb"];
-const THEME_NAME = { dark: "暗色", light: "亮色", cb: "色盲友好" };
+/* ---------- 主题：暗色 / 亮色 / 粉色 / 橙色 ---------- */
+const THEMES = ["dark", "light", "pink", "orange"];
+const THEME_NAME = { dark: "暗色", light: "亮色", pink: "粉色", orange: "橙色" };
 let THEME = "dark";
 
 function applyTheme(t, save){

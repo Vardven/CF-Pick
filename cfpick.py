@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -216,6 +216,10 @@ def _ports_of(cfg) -> list:
     return out or [DEFAULT_PORT]
 
 
+THEMES = ("dark", "light", "pink", "orange")
+# 无边框窗口的底色：圆角之外露出来的那一圈，跟主题底一致才不显毛边
+THEME_BG = {"dark": "#080C14", "light": "#EEF2F9", "pink": "#0D0710", "orange": "#0C0806"}
+
 DEFAULT_CFG = {
     "sni": DEFAULT_SNI,
     "port": DEFAULT_PORT,          # 老字段：单端口时代的配置，仍读写
@@ -225,7 +229,7 @@ DEFAULT_CFG = {
     "family": "auto",
     "max_ips": 2,
     "auto_open": True,
-    "theme": "dark",        # dark / light / cb（色盲友好）
+    "theme": "dark",        # dark / light / pink / orange
     "skip_env_check": False,  # 只对「系统代理 / 代理进程」这类软提示生效，TUN 永远拦
 }
 
@@ -248,6 +252,10 @@ def load_cfg() -> dict:
     if str(cfg.get("sni") or "").strip().lower() == LEGACY_SNI:
         cfg["sni"] = ""
         save_cfg(cfg)          # 顺手把磁盘上的旧值也抹掉，别让配置文件里留着假域名
+    # 主题白名单化：v1.2.x 之前的 cb（色盲友好）已下线，退回默认深色
+    if cfg.get("theme") not in THEMES:
+        cfg["theme"] = "dark"
+        save_cfg(cfg)
     return cfg
 
 
@@ -1143,7 +1151,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"stopped": True})
         if p == "/api/theme":
             th = str(body.get("theme") or "")
-            if th not in ("dark", "light", "cb"):
+            if th not in THEMES:
                 return self._json({"error": "未知主题"})
             cfg = load_cfg()
             cfg["theme"] = th
@@ -2696,7 +2704,7 @@ def embed_start(port: int) -> bool:
         return False
     w_px, h_px = _app_size()
     theme = str(load_cfg().get("theme") or "dark")
-    bg = "#EEF2F9" if theme == "light" else "#080C14"
+    bg = THEME_BG.get(theme, THEME_BG["dark"])
     try:
         w = wv.create_window(
             PAGE_TITLE + " · 测速台",
