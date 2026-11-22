@@ -31,7 +31,8 @@ from urllib.parse import urlparse
 
 APP = "CF-Pick"
 VERSION = "1.0.7"
-DEFAULT_SNI = "cdn.example.com"
+DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
+LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
 PORTS = list(range(5390, 5406))
 
@@ -169,6 +170,9 @@ def load_cfg() -> dict:
             cfg.update({k: v for k, v in data.items() if k in DEFAULT_CFG})
     except Exception:
         pass
+    # 老版本把示例域名当默认值存进了配置：一律清空，让输入框回到空白
+    if str(cfg.get("sni") or "").strip().lower() == LEGACY_SNI:
+        cfg["sni"] = ""
     return cfg
 
 
@@ -867,7 +871,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "检测到 VPN / 代理正在运行，请先关闭再测速",
                                    "blocked": True, "items": probe["items"]})
             try:
-                cfg["sni"] = str(body.get("sni") or DEFAULT_SNI).strip()
+                cfg["sni"] = str(body.get("sni") or "").strip()
                 cfg["port"] = max(1, min(65535, int(body.get("port") or DEFAULT_PORT)))
                 cfg["tries"] = max(1, min(10, int(body.get("tries") or 2)))
                 cfg["concurrency"] = max(4, min(64, int(body.get("concurrency") or 32)))
