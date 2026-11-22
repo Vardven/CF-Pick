@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.10"
+VERSION = "1.1.0"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -208,6 +208,7 @@ DEFAULT_CFG = {
     "family": "auto",
     "max_ips": 2,
     "auto_open": True,
+    "theme": "dark",        # dark / light / cb（色盲友好）
 }
 
 
@@ -976,6 +977,8 @@ class Handler(BaseHTTPRequestHandler):
                 # 候选入口每次打开都是空白，要测什么由使用者自己导入或粘贴
                 "candidates": [],
                 "version": VERSION,
+                # 内嵌窗口（无边框）才需要页面画标题栏和缩放热区
+                "embed": bool(_APP.get("embed")),
                 **snap,
             })
         if p == "/api/presets":
@@ -1052,6 +1055,26 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/stop":
             STATE.stop.set()
             return self._json({"stopped": True})
+        if p == "/api/theme":
+            th = str(body.get("theme") or "")
+            if th not in ("dark", "light", "cb"):
+                return self._json({"error": "未知主题"})
+            cfg = load_cfg()
+            cfg["theme"] = th
+            save_cfg(cfg)
+            return self._json({"theme": th})
+        if p == "/api/win":
+            # 自绘标题栏用：最小化 / 最大化 / 拖动 / 拉边框
+            act = str(body.get("action") or "")
+            if act == "min":
+                win_minimize()
+            elif act == "max":
+                return self._json({"maxed": win_toggle_max(), "embed": bool(_APP.get("embed"))})
+            elif act == "drag":
+                win_drag()
+            elif act == "resize":
+                win_resize(str(body.get("dir") or ""))
+            return self._json({"ok": True, "maxed": _WIN["maxed"], "embed": bool(_APP.get("embed"))})
         if p == "/api/candidates":
             text = str(body.get("text") or "")
             items, seen = [], set()
@@ -2362,6 +2385,140 @@ def app_hide() -> None:
         log("app_hide failed: " + traceback.format_exc()[-200:])
 
 
+# --------------------------------------------------------------------------
+# 自绘标题栏：窗口是无边框的，拖动 / 缩放 / 最大化都要自己接
+# --------------------------------------------------------------------------
+_SWP_NOZORDER = 0x0004
+_SWP_NOMOVE = 0x0002
+_SWP_NOSIZE = 0x0001
+_MIN_W, _MIN_H = 960, 620
+_WIN = {"maxed": False, "restore": None, "moving": False, "resizing": False}
+
+
+def _work_area():
+    """当前显示器工作区（不含任务栏）。"""
+    u32 = ctypes.windll.user32
+    rc = wintypes.RECT()
+    if u32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rc), 0):
+        return rc.left, rc.top, rc.right, rc.bottom
+    return 0, 0, u32.GetSystemMetrics(0), u32.GetSystemMetrics(1)
+
+
+def win_drag() -> None:
+    """按住页头拖窗口。
+
+    无边框窗口拿不到系统的移动循环（发 WM_NCLBUTTONDOWN/HTCAPTION 在这套窗体上不起作用），
+    所以自己跟鼠标走。最大化状态下先按光标比例还原，再接着拖——和系统行为一致。
+    """
+    hwnd = app_hwnd()
+    if not hwnd or _WIN["resizing"] or _WIN["moving"]:
+        return
+    _WIN["moving"] = True
+
+    def run():
+        u32 = ctypes.windll.user32
+        try:
+            pt = wintypes.POINT()
+            u32.GetCursorPos(ctypes.byref(pt))
+            if _WIN["maxed"]:                     # 从最大化状态拖出来：先还原到对应位置
+                r = _WIN["restore"] or (0, 0, 1400, 900)
+                wl, wt, wr, wb = _work_area()
+                nh = r[3] if r[3] > 200 else 900
+                nw = r[2] if r[2] > 300 else 1400
+                ratio = (pt.x - wl) / max(1, wr - wl)
+                nl = int(pt.x - nw * ratio)
+                nt = max(wt, pt.y - 20)
+                _WIN["maxed"] = False
+                u32.SetWindowPos(hwnd, None, nl, nt, nw, nh, _SWP_NOZORDER)
+            rc = wintypes.RECT()
+            u32.GetWindowRect(hwnd, ctypes.byref(rc))
+            ox, oy = pt.x, pt.y
+            l, t = rc.left, rc.top
+            while u32.GetAsyncKeyState(0x01) & 0x8000:
+                u32.GetCursorPos(ctypes.byref(pt))
+                u32.SetWindowPos(hwnd, None, l + (pt.x - ox), t + (pt.y - oy), 0, 0,
+                                 _SWP_NOZORDER | _SWP_NOSIZE)
+                time.sleep(0.012)
+            u32.GetCursorPos(ctypes.byref(pt))
+            wl, wt, _wr, _wb = _work_area()
+            if pt.y <= wt + 3:                    # 拖到屏幕顶 = 最大化，和系统一样
+                win_toggle_max()
+        except Exception:
+            pass
+        finally:
+            _WIN["moving"] = False
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def win_resize(direction: str) -> None:
+    """按住窗口边 / 角拉大小：无边框窗口没有原生缩放边框，自己跟一遍鼠标。"""
+    hwnd = app_hwnd()
+    if not hwnd or _WIN["maxed"] or _WIN["resizing"]:
+        return
+    d = "".join(ch for ch in str(direction or "").lower() if ch in "nsew")
+    if not d or d in ("ns", "sn", "ew", "we"):
+        return
+    _WIN["resizing"] = True
+
+    def run():
+        u32 = ctypes.windll.user32
+        try:
+            r = wintypes.RECT()
+            pt = wintypes.POINT()
+            u32.GetWindowRect(hwnd, ctypes.byref(r))
+            u32.GetCursorPos(ctypes.byref(pt))
+            ox, oy = pt.x, pt.y
+            l, t, rr, b = r.left, r.top, r.right, r.bottom
+            while u32.GetAsyncKeyState(0x01) & 0x8000:
+                u32.GetCursorPos(ctypes.byref(pt))
+                dx, dy = pt.x - ox, pt.y - oy
+                nl, nt, nr, nb = l, t, rr, b
+                if "w" in d:
+                    nl = min(l + dx, rr - _MIN_W)
+                if "e" in d:
+                    nr = max(rr + dx, l + _MIN_W)
+                if "n" in d:
+                    nt = min(t + dy, b - _MIN_H)
+                if "s" in d:
+                    nb = max(b + dy, t + _MIN_H)
+                u32.SetWindowPos(hwnd, None, nl, nt, nr - nl, nb - nt, _SWP_NOZORDER)
+                time.sleep(0.012)
+        except Exception:
+            pass
+        finally:
+            _WIN["resizing"] = False
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def win_toggle_max() -> bool:
+    """最大化 / 还原：无边框窗口不靠系统的 zoom，自己记原位置再铺满工作区。"""
+    hwnd = app_hwnd()
+    if not hwnd:
+        return False
+    u32 = ctypes.windll.user32
+    if _WIN["maxed"]:
+        l, t, w, h = _WIN["restore"] or (0, 0, 1400, 900)
+        _WIN["maxed"] = False
+        u32.SetWindowPos(hwnd, None, l, t, w, h, _SWP_NOZORDER)
+        return False
+    r = wintypes.RECT()
+    u32.GetWindowRect(hwnd, ctypes.byref(r))
+    _WIN["restore"] = (r.left, r.top, r.right - r.left, r.bottom - r.top)
+    wl, wt, wr, wb = _work_area()
+    _WIN["maxed"] = True
+    u32.SetWindowPos(hwnd, None, wl, wt, wr - wl, wb - wt, _SWP_NOZORDER)
+    return True
+
+
+def win_minimize() -> None:
+    hwnd = app_hwnd()
+    if hwnd:
+        ctypes.windll.user32.ShowWindow(hwnd, 6)      # SW_MINIMIZE
+
+
+
 def _app_closing():
     """点窗口右上角 X：收进托盘，不结束进程。"""
     if _APP["quitting"]:
@@ -2414,11 +2571,10 @@ def _dress_app_window() -> None:
     except Exception:
         pass
     try:
-        for attr in (20, 19):                               # DWMWA_USE_IMMERSIVE_DARK_MODE
-            on = ctypes.c_int(1)
-            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
-                break
+        # 无边框窗口没有系统标题栏了：靠 DWM 把四角切圆（Win11），Win10 上不生效也不影响
+        corner = ctypes.c_int(2)                            # DWMWCP_ROUND
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))   # DWMWA_WINDOW_CORNER_PREFERENCE
     except Exception:
         pass
 
@@ -2433,9 +2589,9 @@ def _app_size() -> tuple:
         else:
             sw, sh = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
         s = _dpi_scale()
-        # 传进去的是内容区尺寸，标题栏 + 边框还得另算，所以留 46 的余量
+        # 无边框窗口：传进去的就是整窗尺寸，不用再给标题栏留余量
         w = int(min(1240, sw / s - 60))
-        h = int(min(900, sh / s - 46))
+        h = int(min(900, sh / s - 30))
         return max(960, w), max(620, h)
     except Exception:
         return 1240, 860
@@ -2447,12 +2603,15 @@ def embed_start(port: int) -> bool:
     if not wv:
         return False
     w_px, h_px = _app_size()
+    theme = str(load_cfg().get("theme") or "dark")
+    bg = "#EEF2F9" if theme == "light" else "#080C14"
     try:
         w = wv.create_window(
             PAGE_TITLE + " · 测速台",
             "http://127.0.0.1:%d/" % port,
             width=w_px, height=h_px, min_size=(960, 620),
-            background_color="#0B0F1A",
+            frameless=True, easy_drag=False,      # 标题栏自己画：右上角那组按钮在页面里
+            background_color=bg,
         )
         _APP["win"] = w
         w.events.closing += _app_closing
