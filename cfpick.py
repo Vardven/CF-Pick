@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -50,14 +50,67 @@ CF_RANGES = [
 ]
 CF_NETS = [ipaddress.ip_network(n) for n in CF_RANGES]
 
+# 光看上面 15 段会把 CF 自有 AS 的地址误判成「非 CF」：
+# AS209242（Cloudflare London）、AS395747、AS202623 登记在 RIPE 的段基本都不在官方列表里，
+# 官方列表只是「代理域名会解析到的那 15 段」，不是「CF 的全部地址」。
+# 所以再按 cf-asn.txt 里 CF 自有 AS 的登记段补一层，命中的标上 AS 号，仍然照测。
+_OWN_INDEX = None          # {首字节: [(net, asn), ...]}
+_OWN_WIDE = []             # 比 /8 还宽的段（理论上没有，防御性留着）
 
-def is_cf_ip(ip: str) -> bool:
-    """只认 CF 官方网段。非 CF 地址即使返回 200/404 也不是有效入口。"""
+
+def _build_own_index():
+    idx, wide = {}, []
+    try:
+        groups = asn_groups()
+    except Exception:
+        groups = []
+    for g in groups:
+        asn = g["asn"]
+        for s in g["prefixes"]:
+            try:
+                net = ipaddress.ip_network(s, strict=False)
+            except ValueError:
+                continue
+            if net.version != 4:
+                continue
+            if net.prefixlen < 8:
+                wide.append((net, asn))
+            else:
+                idx.setdefault(int(str(net.network_address).split(".")[0]), []).append((net, asn))
+    return idx, wide
+
+
+def _own_index():
+    global _OWN_INDEX
+    if _OWN_INDEX is None:
+        _OWN_INDEX = _build_own_index()
+    return _OWN_INDEX
+
+
+def cf_source(ip: str):
+    """'' = 官方公布段；'AS209242' 之类 = CF 自有 AS 的登记段；None = 不是 CF 地址"""
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
-        return False
-    return any(addr in net for net in CF_NETS if net.version == addr.version)
+        return None
+    for net in CF_NETS:
+        if net.version == addr.version and addr in net:
+            return ""
+    if addr.version != 4:
+        return None
+    idx, wide = _own_index()
+    for net, asn in wide:
+        if addr in net:
+            return asn
+    for net, asn in idx.get(addr.packed[0], ()):
+        if addr in net:
+            return asn
+    return None
+
+
+def is_cf_ip(ip: str) -> bool:
+    """官方 15 段 + CF 自有 AS 段都算 CF。真正的非 CF 地址即使返回 200/404 也不是有效入口。"""
+    return cf_source(ip) is not None
 
 
 # --------------------------------------------------------------------------
@@ -482,19 +535,23 @@ def _resolve_all(items, cfg):
                         "ok": 0, "tries": cfg["tries"], "usable": False,
                     })
             else:
-                cf_addrs = [(f, ip) for f, ip in addrs if is_cf_ip(ip)]
+                cf_addrs = []
+                for f, ip in addrs:
+                    src = cf_source(ip)
+                    if src is not None:
+                        cf_addrs.append((f, ip, src))
                 if not cf_addrs:
                     with STATE.lock:
                         STATE.results.append({
                             "domain": cand,
                             "family": "v6" if addrs[0][0] == socket.AF_INET6 else "v4",
                             "ip": addrs[0][1], "ms": None, "status": "非CF节点", "code": 0,
-                            "ok": 0, "tries": cfg["tries"], "usable": False,
+                            "ok": 0, "tries": cfg["tries"], "usable": False, "asn": "",
                         })
                 for fam in (socket.AF_INET6, socket.AF_INET):
                     picked = [a for a in cf_addrs if a[0] == fam][:per_fam_cap]
-                    for f, ip in picked:
-                        jobs.append((cand, f, ip))
+                    for f, ip, src in picked:
+                        jobs.append((cand, f, ip, src))
             with STATE.lock:
                 STATE.done += 1
     return jobs
@@ -531,7 +588,7 @@ def _run_jobs(jobs, cfg):
 
 
 def _one_entry(job, tries, sni, port):
-    cand, fam, ip = job
+    cand, fam, ip, src = job
     fam_name = "v6" if fam == socket.AF_INET6 else "v4"
     lat, codes, err = [], [], ""
     for _ in range(tries):
@@ -548,9 +605,10 @@ def _one_entry(job, tries, sni, port):
         code = codes[-1]
         status = classify(code)
         return {"domain": cand, "family": fam_name, "ip": ip, "ms": ms, "status": status,
-                "code": code, "ok": len(lat), "tries": tries, "usable": status == "可用"}
+                "code": code, "ok": len(lat), "tries": tries, "usable": status == "可用",
+                "asn": src or ""}
     return {"domain": cand, "family": fam_name, "ip": ip, "ms": None, "status": err or "不通",
-            "code": 0, "ok": 0, "tries": tries, "usable": False}
+            "code": 0, "ok": 0, "tries": tries, "usable": False, "asn": src or ""}
 
 
 def start_run(cfg) -> dict:
