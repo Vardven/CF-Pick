@@ -52,6 +52,14 @@ h1 b{background:linear-gradient(92deg,#67e8f9,#a78bfa 60%,#f0abfc);-webkit-backg
 .chip.off{color:#4e5769;border-color:rgba(255,255,255,.05);background:rgba(255,255,255,.02)}
 .chip.off i{background:#3f4757;box-shadow:0 0 0 3px rgba(63,71,87,.12)}
 .chip.off span{opacity:.9}
+/* 右上角显示本地服务占用的端口：一眼能看到，点一下复制地址 */
+.chip.svc{cursor:pointer;font-family:inherit;gap:7px;padding:6px 11px 6px 10px;font-size:11.5px;
+  color:#8b95ab;background:rgba(8,11,19,.6);border:1px solid rgba(255,255,255,.08);transition:.16s}
+.chip.svc b{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11.5px;
+  font-weight:600;color:#9fb0c8;letter-spacing:.2px}
+.chip.svc::before{content:"端口";font-size:10px;letter-spacing:.7px;color:#5f6a80}
+.chip.svc:hover{color:#67e8f9;border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.08)}
+.chip.svc:hover b{color:#67e8f9}
 body.offline #btnRun{opacity:.45}
 .offline-tip{display:none;margin:9px 0 0;font-size:11px;line-height:1.5;color:#f0a97a}
 body.offline .offline-tip{display:block}
@@ -274,9 +282,49 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 /* ---------- 「已最小化到托盘」遮罩（只盖一层，DOM 保留，随时能原样恢复） ---------- */
 #goneMask{z-index:70;backdrop-filter:none;-webkit-backdrop-filter:none;
   background:radial-gradient(900px 560px at 50% 8%,rgba(34,211,238,.07),transparent 62%),#080c14}
-.gone{max-width:400px;text-align:center;padding:0 26px;animation:dlgin .26s cubic-bezier(.2,.8,.3,1) both}
+.gone{max-width:420px;text-align:center;padding:0 26px;animation:dlgin .26s cubic-bezier(.2,.8,.3,1) both}
 .gone-dot{width:9px;height:9px;border-radius:50%;background:#22d3ee;margin:0 auto 20px;
   box-shadow:0 0 0 5px rgba(34,211,238,.13);animation:pulse 2.4s ease-in-out infinite}
+
+/* 正在退出：转圈 + 三步清单，让人知道进程真的在收尾、端口会被放开 */
+.spin{width:34px;height:34px;margin:0 auto 20px;border-radius:50%;
+  border:2.5px solid rgba(255,255,255,.1);border-top-color:#22d3ee;border-right-color:#a78bfa;
+  animation:spin .85s linear infinite}
+.spin.done{border-color:rgba(52,211,153,.35);border-top-color:#34d399;animation:none;
+  display:grid;place-items:center;color:#34d399;font-size:16px;font-weight:700}
+@keyframes spin{to{transform:rotate(360deg)}}
+.steps{list-style:none;margin:20px auto 0;padding:0;display:inline-flex;flex-direction:column;
+  gap:9px;text-align:left}
+.steps li{display:flex;align-items:center;gap:9px;font-size:12px;color:#5f6a80;transition:color .25s}
+.steps li::before{content:"";width:6px;height:6px;border-radius:50%;background:#394253;
+  box-shadow:0 0 0 3px rgba(57,66,83,.18);transition:.25s}
+.steps li.ok{color:#9aa5bb}
+.steps li.ok::before{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.16)}
+
+/* ---------- 退出确认（页面内弹窗，和主界面同一套配色，不弹系统灰框） ---------- */
+.exit-dlg{width:min(478px,92vw);border-radius:16px;overflow:hidden;
+  background:linear-gradient(180deg,#1b2130,#111621);border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 34px 74px -22px #000,inset 0 1px 0 rgba(255,255,255,.07);
+  animation:dlgin .22s cubic-bezier(.2,.8,.3,1) both}
+.ex-head{display:flex;gap:13px;padding:20px 20px 0}
+.ex-ico{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(145deg,rgba(248,113,113,.18),rgba(167,139,250,.1));
+  border:1px solid rgba(248,113,113,.26)}
+.ex-head h3{margin:1px 0 6px;font-size:15.5px;font-weight:650;color:#f2f5fb;letter-spacing:.2px}
+.ex-head p{margin:0;font-size:12px;line-height:1.6;color:#8b95ab}
+.ex-opts{display:flex;flex-direction:column;gap:9px;padding:15px 20px 3px}
+.opt{display:block;width:100%;text-align:left;font-family:inherit;cursor:pointer;
+  padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.032);
+  border:1px solid rgba(255,255,255,.09);transition:.16s}
+.opt b{display:block;font-size:13px;font-weight:600;color:#e8ecf5}
+.opt small{display:block;margin-top:5px;font-size:11.5px;line-height:1.6;color:#7c869c}
+.opt em{font-style:normal;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;color:#9fb0c8}
+.opt:hover{border-color:rgba(34,211,238,.4);background:rgba(34,211,238,.07)}
+.opt:hover b{color:#a5f3fc}
+.opt.danger b{color:#fca5a5}
+.opt.danger:hover{border-color:rgba(248,113,113,.45);background:rgba(248,113,113,.08)}
+.opt.danger:hover b{color:#fecaca}
+.ex-foot{display:flex;justify-content:flex-end;padding:13px 20px 17px}
 .gone h3{font-size:15.5px;color:#e8ecf4;font-weight:600;margin:0 0 12px;letter-spacing:.2px}
 .gone p{font-size:12.2px;line-height:1.9;color:#8b95ab;margin:0}
 .gone .btn-sm{margin-top:20px}
@@ -333,6 +381,7 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
     </div>
     <div class="head-right">
       <span class="chip off" id="chip"><i></i><span id="chipText">连接中</span></span>
+      <button class="chip svc" id="chipSvc" hidden title="本地服务地址，点一下复制"><b id="svcAddr">—</b></button>
       <button class="btn-sm" id="btnExit">退出</button>
     </div>
   </header>
@@ -502,11 +551,42 @@ tr.fresh{animation:rowin .45s cubic-bezier(.2,.8,.3,1) both}
 
 <div id="toast"></div>
 
+<!-- 点右上角「退出」先问一句：收进托盘，还是连进程一起结束 -->
+<div class="mask" id="exitMask">
+  <div class="exit-dlg" role="dialog" aria-modal="true" aria-labelledby="exitTitle">
+    <div class="ex-head">
+      <div class="ex-ico">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3v9" stroke="#fca5a5" stroke-width="2" stroke-linecap="round"/>
+          <path d="M6.4 6.6a7.5 7.5 0 1 0 11.2 0" stroke="#fca5a5" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div>
+        <h3 id="exitTitle">要退出 CF-Pick 吗？</h3>
+        <p>直接关窗口只会收进托盘，进程和端口都还在。这里决定它的去留。</p>
+      </div>
+    </div>
+    <div class="ex-opts">
+      <button class="opt" id="optTray">
+        <b>收进系统托盘</b>
+        <small>进程留在后台，本地服务继续占用 <em id="trayAddr">127.0.0.1:5390</em>；
+          双击托盘图标、或再双击一次 CF-Pick.exe 都能原样回来。</small>
+      </button>
+      <button class="opt danger" id="optQuit">
+        <b>彻底退出</b>
+        <small>停下正在跑的测速，关闭本地服务并释放端口，然后结束进程。</small>
+      </button>
+    </div>
+    <div class="ex-foot"><button class="btn-sm" id="exitCancel">取消</button></div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
 const S = { running:false, done:0, total:0, since:0, t0:0, results:[], usable:[], family:"auto", poll:null,
-            minimized:false, goneQuit:false, reopen:0 };
+            minimized:false, goneQuit:false, reopen:0, endpoint:"" };
 const MAXROWS = 20;
 const DEMO = [{"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:8390::395e:9f27", "ms": 301, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 304, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 314, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf2.996616.xyz", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 316, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:91b4::aaa5:d6c1", "ms": 317, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "img.css.sd", "family": "v6", "ip": "2606:4700:9a9a::396:166b", "ms": 320, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.galgamex.net", "family": "v6", "ip": "2606:4700:9b08::93e7:7adb", "ms": 322, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:99e6::1f00:5835", "ms": 323, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:99e4::4f5e:9096", "ms": 326, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9a68::1252:a6df", "ms": 327, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.cnno.de", "family": "v6", "ip": "2606:4700:9a96::20e2:56fe", "ms": 329, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.777791.xyz", "family": "v6", "ip": "2606:4700:91b1::c25a:fef2", "ms": 331, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.swowd.com", "family": "v6", "ip": "2606:4700:9ad3::8dc9:5368", "ms": 336, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.qq.ms", "family": "v6", "ip": "2606:4700:9c67::76fc:1039", "ms": 358, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "bbs.alipansou.com", "family": "v4", "ip": "104.25.244.197", "ms": 485, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "eii.at", "family": "v4", "ip": "104.25.244.197", "ms": 488, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "mokeedev.com", "family": "v4", "ip": "172.66.134.83", "ms": 492, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf-ip-site.vov.moe", "family": "v4", "ip": "172.66.216.230", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "224322.xyz", "family": "v4", "ip": "104.25.245.13", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cdn.jwcmdr.top", "family": "v4", "ip": "104.25.255.40", "ms": 494, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "skk.moe", "family": "v4", "ip": "172.66.132.196", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.mfyx.cn", "family": "v4", "ip": "104.25.240.121", "ms": 496, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "www.5h.com", "family": "v4", "ip": "172.66.137.209", "ms": 497, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}, {"domain": "cf.1o.ee", "family": "v4", "ip": "172.66.128.235", "ms": 499, "status": "可用", "code": 404, "ok": 2, "tries": 2, "usable": true}];
 
@@ -582,7 +662,7 @@ async function beat(){
   }
 
   if(!ok && S.minimized && !S.goneQuit){   // 后台真被退掉了，遮罩文案跟着改，别骗人
-    showGone(true);
+    showDead();
   }
 
   const first = !CONN.seen;
@@ -612,8 +692,13 @@ function startBeat(){
   scheduleBeat();
 }
 
-/* ---------- 最小化到托盘 / 彻底退出：只盖一层遮罩，页面 DOM 保留 ---------- */
+/* ---------- 收进托盘 / 正在退出 / 已退出：只盖一层遮罩，页面 DOM 保留 ---------- */
 let gonePoll = null;
+let MIN_HTML = "";                    // 原始的「已收进托盘」那套 DOM，随时能放回来
+function bindGone(){
+  const b = $("#goneBack");
+  if(b) b.onclick = ()=> restoreUI();
+}
 
 /* 彻底退出后守在这里：服务一旦重新起来，这一页直接刷新成测速台，
    于是双击 exe 是「原来的标签页活过来」，而不是又开一个新标签。 */
@@ -629,21 +714,53 @@ function watchRestart(){
     }catch(e){}
     gonePoll = setTimeout(tick, 1800);
   };
-  // 退出的接口是先回包、再延时 0.4s 关进程，所以头一次要等一会儿再探，
+  // 退出的接口是先回包、再延时关进程，所以头一次要等一会儿再探，
   // 否则会探到「还没死」的自己，刚盖上遮罩就刷新没了
-  gonePoll = setTimeout(tick, 1300);
+  gonePoll = setTimeout(tick, 1400);
 }
 
-function showGone(quit){
+/* 正在退出：转圈 + 三步清单，把「进程在收尾、端口会被放开」说清楚 */
+function showQuitting(){
   const box = $("#goneMask");
-  if(quit && !S.goneQuit){
-    S.goneQuit = true;
-    box.innerHTML = '<div class="gone"><div class="gone-dot" style="background:#5b6579;box-shadow:0 0 0 5px rgba(91,101,121,.16)"></div>'
-      + '<h3>已彻底退出</h3>'
-      + '<p>本地测速服务已经关掉了。<br>再双击一次 CF-Pick.exe，这一页会自动变回测速台，不用另开新标签。</p></div>';
-    watchRestart();
-  }
-  S.minimized = !quit;
+  S.goneQuit = true;
+  S.minimized = false;
+  box.innerHTML = '<div class="gone">'
+    + '<div class="spin"></div>'
+    + '<h3>正在退出并释放端口…</h3>'
+    + '<p>正在停下测速任务、关闭本地服务（<span style="font-family:ui-monospace,Consolas,monospace">'
+    + (S.endpoint || "127.0.0.1") + '</span>）。</p>'
+    + '<ul class="steps">'
+    + '<li>停止正在跑的测速</li><li>关闭本地服务</li><li>释放端口</li></ul>'
+    + '</div>';
+  box.classList.add("on");
+  setBeatDelay();
+  const lis = [...box.querySelectorAll(".steps li")];
+  lis.forEach((li, i)=> setTimeout(()=> li.classList.add("ok"), 240 + i * 280));
+  // 浏览器模式下页面会留着：进程死透了就换成「已退出」，别一直转圈
+  setTimeout(()=>{ if(S.goneQuit && !CONN.ok) showDead(); }, 2200);
+  watchRestart();
+}
+
+/* 真的退干净了（进程没了，或本来就在托盘里被关掉） */
+function showDead(){
+  const box = $("#goneMask");
+  S.goneQuit = true;
+  S.minimized = false;
+  box.innerHTML = '<div class="gone">'
+    + '<div class="spin done">✓</div>'
+    + '<h3>已退出 · 端口已释放</h3>'
+    + '<p>本地服务已经关掉了。<br>再双击一次 CF-Pick.exe，这一页会自动变回测速台，不用另开新标签。</p>'
+    + '</div>';
+  box.classList.add("on");
+  setBeatDelay();
+  watchRestart();
+}
+
+/* 收进托盘：原样留着 DOM，托盘双击即恢复，测出来的结果不丢 */
+function showTray(){
+  const box = $("#goneMask");
+  if(S.goneQuit){ S.goneQuit = false; box.innerHTML = MIN_HTML || box.innerHTML; bindGone(); }
+  S.minimized = true;
   box.classList.add("on");
   setBeatDelay();
 }
@@ -697,6 +814,11 @@ async function boot(){
   startBeat();
   try{
     const d = await api("/api/init");
+    if(d.endpoint){                      // 右上角常驻显示「本地服务占用的端口」
+      S.endpoint = d.endpoint;
+      $("#svcAddr").textContent = d.endpoint;
+      $("#chipSvc").hidden = false;
+    }
     $("#sni").value = d.config.sni || "";
     $("#port").value = setPort(d.config.port);
     $("#tries").value = d.config.tries || 2;
@@ -1067,21 +1189,50 @@ window.addEventListener("scroll", ()=>{
   if($("#impMenu").classList.contains("on")) toggleMenu(false);
 }, true);
 
-$("#btnExit").onclick = async ()=>{
-  if(S.running){ try{ await api("/api/stop", {}); }catch(e){} }
+/* ---------- 退出：页面内弹窗问一句，选完再把请求发给后端 ---------- */
+function openExitDlg(){
+  if(S.running){ try{ api("/api/stop", {}); }catch(e){} }   // 先把测速停下再说
+  $("#exitMask").classList.add("on");
   $("#btnExit").disabled = true;
-  let mode = "exit";
-  try{ const r = await api("/api/exit", {}); mode = (r && r.mode) || "exit"; }catch(e){}
-  // 只盖一层遮罩，页面 DOM 留着 —— 托盘双击 / 再双击 exe 能原样恢复，已测结果也不丢
-  showGone(mode !== "minimize");
+}
+function closeExitDlg(){
+  $("#exitMask").classList.remove("on");
+  $("#btnExit").disabled = false;
+}
+async function doExit(mode){
+  $("#exitMask").classList.remove("on");
+  $("#btnExit").disabled = true;
+  // 先把遮罩铺好再发请求：彻底退出时进程 0.25 秒后就没了，晚了就看不见反馈
+  if(mode === "exit") showQuitting(); else showTray();
+  try{ await api("/api/exit", {mode}); }
+  catch(e){ if(mode === "exit") showDead(); else closeExitDlg(); }
+}
+
+$("#btnExit").onclick = openExitDlg;
+$("#exitCancel").onclick = closeExitDlg;
+$("#exitMask").onclick = e=>{ if(e.target === $("#exitMask")) closeExitDlg(); };
+$("#optTray").onclick = ()=> doExit("minimize");
+$("#optQuit").onclick = ()=> doExit("exit");
+
+/* 右上角的端口标签：点一下把本地服务地址复制走 */
+$("#chipSvc").onclick = async ()=>{
+  const addr = S.endpoint || $("#svcAddr").textContent;
+  try{ await navigator.clipboard.writeText("http://" + addr + "/"); toast("已复制 " + addr); }
+  catch(e){ toast(addr); }
 };
 
 $("#goneBack").onclick = ()=> restoreUI();
 
 document.addEventListener("keydown", e=>{
   if((e.ctrlKey||e.metaKey) && e.key === "Enter"){ e.preventDefault(); if(!S.running) start(); }
+  if(e.key === "Escape"){
+    if($("#exitMask").classList.contains("on")) closeExitDlg();
+    else if($("#impMenu").classList.contains("on")) toggleMenu(false);
+  }
 });
 
+MIN_HTML = $("#goneMask").innerHTML;    // 存一份，退出遮罩用掉之后还能放回来
+bindGone();
 boot();
 setInterval(()=>{ if(S.running) $("#mTime").textContent = ((Date.now()-S.t0)/1000).toFixed(1)+"s"; }, 200);
 </script>

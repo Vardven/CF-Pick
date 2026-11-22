@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成 PyInstaller 启动画面 splash.png（深色卡片 + 环形 logo + 标题）。
+"""生成 PyInstaller 启动图 splash.png。
 
-PyInstaller 的 splash 用 Tk 渲染，会在 exe 解压阶段就显示出来，
-所以双击后立刻有反馈，不会让人以为没点着而反复双击。
+双击 exe 后前 1~2 秒是解压阶段，只有这张静态图能看；Python 一起来就换成
+cfpick.py 里自绘的启动窗（_spl_* 那一组）。所以这张图必须和自绘窗口的
+第一帧对齐：一样的尺寸、一样的竖向渐变底、一样的 logo 与文字位置，
+换窗那一刻才看不出接缝，后面只有进度条和文案接着动。
+
+改这里的时候记得同步 cfpick.py 的 SPL_W / SPL_H 和 _spl_text 的坐标。
 """
 
 import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 600, 340
+W, H, R = 600, 262, 16
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.png")
 
-BG = (11, 14, 24)
-BORDER = (30, 38, 54)
-FG = (232, 236, 244)
-MUTED = (137, 146, 166)
-ACCENT = (125, 211, 252)
+BG_TOP = (17, 22, 36)
+BG_BOT = (8, 11, 19)
+TRACK = (32, 40, 56)
+CYAN = (34, 211, 238)
+INDIGO = (129, 140, 248)
+VIOLET = (167, 139, 250)
+FG = (242, 245, 251)
+SUB = (142, 153, 175)
+TIP = (78, 90, 112)
+PCT = (103, 232, 249)
 
 FONT_CN = "C:/Windows/Fonts/msyh.ttc"
-FONT_EN = "C:/Windows/Fonts/segoeui.ttf"
-FONT_EN_B = "C:/Windows/Fonts/segoeuib.ttf"
+FONT_CN_B = "C:/Windows/Fonts/msyhbd.ttc"
 
 
 def font(path, size):
@@ -34,30 +42,44 @@ def font(path, size):
 img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 d = ImageDraw.Draw(img)
 
-# 卡片
-d.rounded_rectangle([0, 0, W - 1, H - 1], radius=18, fill=BG + (255,))
-d.rounded_rectangle([0, 0, W - 1, H - 1], radius=18, outline=BORDER + (255,), width=1)
+# 1) 竖向渐变底（逐行画，和 _spl_bg 的算法一致）
+for y in range(H):
+    k = y / max(1, H - 1)
+    d.line([(0, y), (W, y)], fill=tuple(
+        int(BG_BOT[i] + (BG_TOP[i] - BG_BOT[i]) * (1 - k)) for i in range(3)) + (255,))
 
-# 环形 logo（与应用图标一致：圆环 + 中心点）
-cx, cy, r = W // 2, 118, 40
-d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=FG + (255,), width=5)
-d.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=FG + (255,))
+# 2) 圆角：四角裁成透明（16px，和窗口的 alpha 表一致）
+mask = Image.new("L", (W, H), 0)
+ImageDraw.Draw(mask).rounded_rectangle([0, 0, W - 1, H - 1], radius=R, fill=255)
+img.putalpha(mask)
 
-# 标题与副标题
-f_title = font(FONT_EN_B, 28)
-f_sub = font(FONT_CN, 14)
-d.text((W // 2, 186), "CF-Pick", font=f_title, fill=FG + (255,), anchor="mm")
-d.text((W // 2, 216), "Cloudflare 入口优选测速台", font=f_sub, fill=MUTED + (255,), anchor="mm")
+# 3) logo：圆环 + 中心点
+cx, cy, r = 56, 76, 21
+d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(8, 11, 18, 255),
+          outline=(232, 236, 244, 255), width=4)
+d.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(232, 236, 244, 255))
 
-# 进度条（静态 34%，配合动效文字传达"在启动"）
-bw, bh = 240, 4
-bx, by = (W - bw) // 2, 262
-d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=2, fill=(26, 33, 48, 255))
-d.rounded_rectangle([bx, by, bx + int(bw * 0.34), by + bh], radius=2, fill=ACCENT + (255,))
+# 4) 文字（坐标 = 自绘版按 1x 缩放后的位置）
+d.text((96, 57), "CF-Pick", font=font(FONT_CN_B, 26), fill=FG + (255,), anchor="lm")
+d.text((97, 94), "Cloudflare 入口优选测速台", font=font(FONT_CN, 13), fill=SUB + (255,), anchor="lm")
 
-# 底部提示（PyInstaller 会把 update_text 叠在窗口底部，这里留白不冲突）
-f_tip = font(FONT_CN, 12)
-d.text((W // 2, 300), "首次启动需解压，约 1–3 秒", font=f_tip, fill=(104, 113, 130, 255), anchor="mm")
+# 5) 进度条：底槽 + 4% 起始填充（自绘窗口从这儿接着涨）
+bx0, bx1, by, bh = 34, 566, 152, 5
+d.rounded_rectangle([bx0, by, bx1, by + bh - 1], radius=bh // 2 + 1, fill=TRACK + (255,))
+fillw = int((bx1 - bx0) * 0.04)
+for x in range(bx0, bx0 + fillw):
+    t = (x - bx0) / max(1, bx1 - bx0)
+    if t < 0.55:
+        u = t / 0.55
+        c = tuple(int(CYAN[i] + (INDIGO[i] - CYAN[i]) * u) for i in range(3))
+    else:
+        u = (t - 0.55) / 0.45
+        c = tuple(int(INDIGO[i] + (VIOLET[i] - INDIGO[i]) * u) for i in range(3))
+    d.line([(x, by), (x, by + bh - 1)], fill=c + (255,))
+
+d.text((34, 180), "正在解压运行组件…", font=font(FONT_CN, 13), fill=SUB + (255,), anchor="lm")
+d.text((566, 180), "4%", font=font(FONT_CN, 13), fill=PCT + (255,), anchor="rm")
+d.text((34, 213), "本地并发测速 · 结果只留在本机", font=font(FONT_CN, 11), fill=TIP + (255,), anchor="lm")
 
 img.save(OUT)
 print("saved", OUT, img.size)

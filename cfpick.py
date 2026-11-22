@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 APP = "CF-Pick"
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 DEFAULT_SNI = ""                       # 首次使用留空，由使用者自己填 CDN 域名
 LEGACY_SNI = "cdn.example.com"         # 老版本写进配置的示例值，读到当空处理
 DEFAULT_PORT = 443
@@ -114,17 +114,13 @@ def fatal(msg: str) -> None:
 
 # --------------------------------------------------------------------------
 # 启动体验：splash 画面 + 单实例互斥
+#
+# 双击后前 1~2 秒是 PyInstaller 解压阶段，只有一张静态图（splash.png）能看；
+# Python 一起来就换成下面自绘的启动窗（见「启动画面」一节），尺寸和静态图
+# 完全一致，所以换窗那一刻看不出跳变，之后进度条和文案才开始动。
 # --------------------------------------------------------------------------
-def splash_text(msg: str) -> None:
-    """更新启动画面底部的提示文字（仅在打包后存在 pyi_splash）。"""
-    try:
-        import pyi_splash  # type: ignore
-        pyi_splash.update_text(msg)
-    except Exception:
-        pass
-
-
-def splash_close() -> None:
+def _pyi_splash_close() -> None:
+    """撤掉 PyInstaller 的静态启动图（非打包运行时没有这个模块）。"""
     try:
         import pyi_splash  # type: ignore
         pyi_splash.close()
@@ -903,8 +899,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(env_check())
         if p == "/api/init":
             snap = snapshot()
+            port = self.server.server_address[1]
             return self._json({
                 "config": load_cfg(),
+                # 页面右上角要显示「本地服务正在哪个端口上」，退出弹窗里也要报这个端口
+                "port": port,
+                "endpoint": "127.0.0.1:%d" % port,
                 # 候选入口每次打开都是空白，要测什么由使用者自己导入或粘贴
                 "candidates": [],
                 "version": VERSION,
@@ -937,23 +937,18 @@ class Handler(BaseHTTPRequestHandler):
                               {"Content-Disposition": 'attachment; filename="cf-pick-result.csv"'})
         if p == "/api/shutdown":
             self._send(200, "bye", "text/plain")
-            tray_remove()
-            threading.Timer(0.35, lambda: os._exit(0)).start()
+            quit_now()
             return
         if p == "/api/exit":
-            # 弹原生对话框让用户选：最小化到托盘 / 彻底退出
+            # GET 兜底（界面走 POST 带 mode，不会弹系统框）；这里还是让用户选一次
             mode = ask_exit_mode()
             self._json({"mode": mode})
             if mode == "minimize":
                 log("exit -> minimize to tray")
-                ui_minimize()
-                app_hide()
-                tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
-            else:
+                go_tray()
+            elif mode == "exit":
                 log("exit -> quit")
-                _APP["quitting"] = True
-                tray_remove()
-                threading.Timer(0.4, lambda: os._exit(0)).start()
+                quit_now()
             return
         self._send(404, "not found", "text/plain")
 
@@ -1004,22 +999,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"count": len(items)})
         if p == "/api/shutdown":
             self._json({"mode": "exit"})
-            tray_remove()
-            threading.Timer(0.35, lambda: os._exit(0)).start()
+            quit_now()
             return
         if p == "/api/exit":
-            mode = ask_exit_mode()
+            mode = str(body.get("mode") or "")
+            if mode not in ("minimize", "exit"):
+                mode = ask_exit_mode()
             self._json({"mode": mode})
             if mode == "minimize":
                 log("exit -> minimize to tray")
-                ui_minimize()
-                app_hide()
-                tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
-            else:
+                go_tray()
+            elif mode == "exit":
                 log("exit -> quit")
-                _APP["quitting"] = True
-                tray_remove()
-                threading.Timer(0.4, lambda: os._exit(0)).start()
+                quit_now()
+            else:
+                log("exit -> cancelled")
             return
         self._json({"error": "unknown"})
 
@@ -1153,6 +1147,15 @@ if HAS_SHELL:
     _s.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(_NID)]
     _s.Shell_NotifyIconW.restype = wintypes.BOOL
 
+    # 自绘按钮要自己判断悬停 / 点击，这几支也得有签名
+    _u.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    _u.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    _u.SetCursor.argtypes = [wintypes.HANDLE]
+    _u.SetCursor.restype = wintypes.HANDLE
+    _u.TrackMouseEvent.argtypes = [ctypes.c_void_p]
+    _u.AdjustWindowRectEx.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD,
+                                      wintypes.BOOL, wintypes.DWORD]
+
 
 def dpi_aware() -> None:
     """启动图撤掉之后再开 DPI 感知，免得小窗被位图拉伸、字发糊。"""
@@ -1186,6 +1189,374 @@ def _make_font(size_px: int, weight: int = 400) -> int:
     except Exception:
         pass
     return 0
+
+
+# --------------------------------------------------------------------------
+# 启动画面：自绘「正在启动」窗口（Steam 更新窗那种观感）
+#
+# 打包后前 1~2 秒是 PyInstaller 解压阶段，只有一张静态图可看（splash.png）。
+# 这个窗口的尺寸、竖向渐变底、logo 与文字位置和静态图逐像素对齐，
+# Python 一起来就接管：静态图撤掉 → 同一个位置开始走进度、跑流光。
+# 分层窗口（per-pixel alpha）让圆角和字都干净，退出时按帧淡出，和主界面无缝接上。
+# --------------------------------------------------------------------------
+SPL_W, SPL_H, SPL_R = 600, 262, 16      # 逻辑尺寸（1x），和 splash.png 一致
+SPL_TICK = 40                           # 刷新间隔 ms
+SPL_WM_PING = 0x0400 + 21               # 进度 / 文案变了
+SPL_WM_BYE = 0x0400 + 22                # 淡出并销毁
+
+_SPL_BG_TOP = (17, 22, 36)
+_SPL_BG_BOT = (8, 11, 19)
+_SPL_TRACK = (32, 40, 56)
+_SPL_CYAN = (34, 211, 238)
+_SPL_INDIGO = (129, 140, 248)
+_SPL_VIOLET = (167, 139, 250)
+
+
+class _SIZEW(ctypes.Structure):
+    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
+
+
+class _PTW(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _BLENDFN(ctypes.Structure):
+    _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
+                ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
+
+
+class _BMIH(ctypes.Structure):
+    _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_long),
+                ("biHeight", ctypes.c_long), ("biPlanes", ctypes.c_uint16),
+                ("biBitCount", ctypes.c_uint16), ("biCompression", ctypes.c_uint32),
+                ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_long),
+                ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", ctypes.c_uint32),
+                ("biClrImportant", ctypes.c_uint32)]
+
+
+_SPL = {"hwnd": None, "memdc": None, "bits": None, "scrdc": None,
+        "w": 0, "h": 0, "x": 0, "y": 0, "S": 1.0,
+        "bg": None, "buf": None, "corner": None, "f": {},
+        "cur": 0.04, "target": 0.04, "text": "正在启动…", "tag": "",
+        "alpha": 255, "ready": False, "closing": False, "fade_t": 0.0,
+        "t0": time.time()}
+
+if HAS_SHELL:
+    _u.UpdateLayeredWindow.restype = wintypes.BOOL
+    _u.UpdateLayeredWindow.argtypes = [
+        wintypes.HWND, wintypes.HDC, ctypes.POINTER(_PTW), ctypes.POINTER(_SIZEW),
+        wintypes.HDC, ctypes.POINTER(_PTW), wintypes.DWORD,
+        ctypes.POINTER(_BLENDFN), wintypes.DWORD]
+    _u.KillTimer.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    _g.CreateCompatibleDC.restype = wintypes.HDC
+    _g.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _g.CreateDIBSection.restype = wintypes.HBITMAP
+    _g.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.c_void_p, wintypes.UINT,
+                                    ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE,
+                                    wintypes.DWORD]
+    _g.Ellipse.argtypes = [wintypes.HDC] + [ctypes.c_int] * 4
+    _g.Ellipse.restype = wintypes.BOOL
+
+
+def _spl_bg(w: int, h: int) -> bytearray:
+    """竖向渐变底：比纯色更像一块屏幕，也顺手把卡片边缘勾出来。"""
+    buf = bytearray(w * h * 4)
+    t0, t1 = _SPL_BG_TOP, _SPL_BG_BOT
+    for y in range(h):
+        k = y / max(1, h - 1)
+        row = bytes((
+            int(t1[2] + (t0[2] - t1[2]) * (1 - k)),
+            int(t1[1] + (t0[1] - t1[1]) * (1 - k)),
+            int(t1[0] + (t0[0] - t1[0]) * (1 - k)), 0)) * w
+        buf[y * w * 4:(y + 1) * w * 4] = row
+    return buf
+
+
+def _spl_corners(w: int, h: int, r: int) -> list:
+    """四个圆角的 alpha 覆盖表（3x3 超采样），画一次用到底。"""
+    out = []
+    for ox, oy, sx, sy in ((0, 0, 1, 1), (w - r, 0, -1, 1), (0, h - r, 1, -1), (w - r, h - r, -1, -1)):
+        cov = bytearray(r * r)
+        for j in range(r):
+            for i in range(r):
+                # 像素在「角内」的那一半才需要算，其余是实心
+                px = i + 0.5 if sx > 0 else r - i - 0.5
+                py = j + 0.5 if sy > 0 else r - j - 0.5
+                if px >= r or py >= r:
+                    cov[j * r + i] = 255
+                    continue
+                acc = 0
+                for sj in (0.17, 0.5, 0.83):
+                    for si in (0.17, 0.5, 0.83):
+                        dx, dy = px + si - 0.5 - r, py + sj - 0.5 - r
+                        if dx * dx + dy * dy <= (r - 0.5) ** 2:
+                            acc += 1
+                cov[j * r + i] = int(255 * acc / 9.0)
+        out.append((ox, oy, r, cov))
+    return out
+
+
+def _spl_lerp(a, b, u: float):
+    return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u)
+
+
+def _spl_bar(buf: bytearray, w: int, S: float, prog: float, now: float) -> None:
+    """进度条：底槽 + 渐变填充 + 一道循环流光（Steam 更新条的那个味道）。"""
+    x0, x1 = int(34 * S), int(566 * S)
+    y0 = int(152 * S)
+    bh = max(4, int(5 * S))
+    r = bh / 2.0
+    fill = x0 + int((x1 - x0) * max(0.0, min(1.0, prog)))
+    span = max(1, x1 - x0)
+    # 流光位置：从左往右扫，扫完从头来
+    head = ((now * 0.36) % 1.30 - 0.15) * span
+    for x in range(x0, x1):
+        ci = ((x - x0) / span)
+        if ci < 0.55:
+            c = _spl_lerp(_SPL_CYAN, _SPL_INDIGO, ci / 0.55)
+        else:
+            c = _spl_lerp(_SPL_INDIGO, _SPL_VIOLET, (ci - 0.55) / 0.45)
+        # 流光：离光头越近越亮
+        d = (x - x0 - head) / (span * 0.09)
+        k = 0.0 if abs(d) > 3.2 else 0.55 * (2.718281828 ** (-d * d))
+        c = (c[0] + (255 - c[0]) * k, c[1] + (255 - c[1]) * k, c[2] + (255 - c[2]) * k)
+        base = c if x < fill else _SPL_TRACK
+        for y in range(y0, y0 + bh):
+            cov = 1.0
+            if x - x0 < r:                       # 左端半月
+                dx = x0 + r - (x + 0.5)
+                dy = (y + 0.5) - (y0 + r)
+                if dx > 0:
+                    dd = (dx * dx + dy * dy) ** 0.5
+                    cov = max(0.0, min(1.0, r - dd + 0.5))
+            elif x1 - 1 - x < r:                 # 右端半月
+                dx = (x + 0.5) - (x1 - r)
+                dy = (y + 0.5) - (y0 + r)
+                if dx > 0:
+                    dd = (dx * dx + dy * dy) ** 0.5
+                    cov = max(0.0, min(1.0, r - dd + 0.5))
+            i = (y * w + x) * 4
+            if cov >= 0.995:
+                buf[i], buf[i + 1], buf[i + 2] = int(base[2]), int(base[1]), int(base[0])
+            elif cov > 0:
+                for ch in range(3):
+                    bgv = buf[i + ch]
+                    buf[i + ch] = int(bgv + ((base[2 - ch]) - bgv) * cov)
+
+
+def _spl_alpha(buf: bytearray, w: int, h: int) -> None:
+    buf[3::4] = b"\xff" * (w * h)                 # 内部实心
+    for ox, oy, r, cov in _SPL["corner"]:
+        for j in range(r):
+            row = (oy + j) * w
+            for i in range(r):
+                a = cov[j * r + i]
+                if a != 255:
+                    buf[(row + ox + i) * 4 + 3] = a
+
+
+def _spl_text(S: float) -> None:
+    """文字与 logo 走 GDI（真轮廓抗锯齿），像素缓冲只管底和进度条。"""
+    hdc = _SPL["memdc"]
+    f = _SPL["f"]
+    _g.SetBkMode(hdc, 1)
+    # logo：外圈用粗笔 + 深色填充，就成了圆环；中间补一个实心点
+    ring_br = _g.CreateSolidBrush(0x00120B08)          # RGB(8,11,18)，比底略深
+    ring_pen = _g.CreatePen(0, max(2, int(3.8 * S)), 0x00F4ECE8)
+    _g.SelectObject(hdc, ring_br)
+    _g.SelectObject(hdc, ring_pen)
+    cx, cy, r = int(56 * S), int(76 * S), int(21 * S)
+    _g.Ellipse(hdc, cx - r, cy - r, cx + r, cy + r)
+    dot_br = _g.CreateSolidBrush(0x00F4ECE8)
+    _g.SelectObject(hdc, dot_br)
+    dr = max(2, int(5.5 * S))
+    _g.Ellipse(hdc, cx - dr, cy - dr, cx + dr, cy + dr)
+    _g.DeleteObject(ring_br)
+    _g.DeleteObject(ring_pen)
+    _g.DeleteObject(dot_br)
+
+    def txt(font, color, x, y, x2, y2, s, flags=0x0020 | 0x0004):
+        _g.SelectObject(hdc, f.get(font) or 0)
+        _g.SetTextColor(hdc, color)
+        rc = wintypes.RECT(x, y, x2, y2)
+        _u.DrawTextW(hdc, s, -1, ctypes.byref(rc), flags)
+
+    txt("title", 0x00FBF5F2, int(96 * S), int(40 * S), int(430 * S), int(74 * S), "CF-Pick")
+    txt("sub", 0x00AF998E, int(97 * S), int(80 * S), int(520 * S), int(108 * S),
+        "Cloudflare 入口优选测速台")
+    txt("ver", 0x00706A5E, int(430 * S), int(24 * S), int(566 * S), int(46 * S),
+        "v" + VERSION, 0x0002 | 0x0020 | 0x0004)
+    txt("phase", 0x00B0A398, int(34 * S), int(168 * S), int(470 * S), int(192 * S), _SPL["text"])
+    txt("pct", 0x00F9E867, int(470 * S), int(168 * S), int(566 * S), int(192 * S),
+        "%d%%" % int(round(_SPL["cur"] * 100)), 0x0002 | 0x0020 | 0x0004)
+    txt("tip", 0x00705A4E, int(34 * S), int(202 * S), int(566 * S), int(224 * S),
+        _SPL["tag"] or "本地并发测速 · 结果只留在本机", 0x0020 | 0x0004)
+
+
+def _spl_paint() -> None:
+    st = _SPL
+    if not st["hwnd"] or not st["bits"]:
+        return
+    w, h, S = st["w"], st["h"], st["S"]
+    buf = st["buf"]
+    buf[:] = st["bg"]
+    _spl_bar(buf, w, S, st["cur"], time.time())
+    ctypes.memmove(st["bits"], bytes(buf), w * h * 4)
+    try:
+        _spl_text(S)                       # GDI 画进同一块 DIB
+    except Exception:
+        pass
+    buf[:] = ctypes.string_at(st["bits"], w * h * 4)   # 取回 GDI 画好的字
+    _spl_alpha(buf, w, h)
+    ctypes.memmove(st["bits"], bytes(buf), w * h * 4)
+
+    size = _SIZEW(w, h)
+    src = _PTW(0, 0)
+    dst = _PTW(st["x"], st["y"])
+    a = max(0, min(255, int(st["alpha"])))
+    blend = _BLENDFN(0, 0, a, 1)           # AC_SRC_OVER + AC_SRC_ALPHA
+    _u.UpdateLayeredWindow(st["hwnd"], st["scrdc"], ctypes.byref(dst),
+                           ctypes.byref(size), st["memdc"], ctypes.byref(src),
+                           0, ctypes.byref(blend), 2)
+
+
+def _spl_create() -> bool:
+    S = _dpi_scale()
+    w, h = int(SPL_W * S), int(SPL_H * S)
+    sw, sh = _u.GetSystemMetrics(0), _u.GetSystemMetrics(1)
+    x, y = max(0, (sw - w) // 2), max(0, (sh - h) // 2)
+
+    proc = _WNDPROC(_spl_proc)
+    _KEEP.append(proc)
+    wc = _WNDCLASS()
+    wc.lpfnWndProc = ctypes.cast(proc, ctypes.c_void_p)
+    wc.hInstance = _k.GetModuleHandleW(None)
+    wc.hCursor = _u.LoadCursorW(None, 32512)
+    wc.lpszClassName = "CFPickSplash"
+    _u.RegisterClassW(ctypes.byref(wc))
+
+    hwnd = _u.CreateWindowExW(
+        0x00080000 | 0x00000080 | 0x00000008 | 0x08000000,   # LAYERED|TOOLWINDOW|TOPMOST|NOACTIVATE
+        "CFPickSplash", "", 0x80000000,                        # WS_POPUP
+        x, y, w, h, None, None, _k.GetModuleHandleW(None), None)
+    if not hwnd:
+        return False
+
+    scrdc = _u.GetDC(None)
+    memdc = _g.CreateCompatibleDC(scrdc)
+    bmi = _BMIH()
+    bmi.biSize, bmi.biWidth, bmi.biHeight = ctypes.sizeof(_BMIH), w, -h
+    bmi.biPlanes, bmi.biBitCount, bmi.biCompression = 1, 32, 0
+    bits = ctypes.c_void_p()
+    hbmp = _g.CreateDIBSection(memdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+    if not hbmp or not bits.value:
+        return False
+    _g.SelectObject(memdc, hbmp)
+
+    _SPL.update(hwnd=hwnd, memdc=memdc, bits=bits, scrdc=scrdc, w=w, h=h, x=x, y=y, S=S,
+                bg=_spl_bg(w, h), buf=bytearray(w * h * 4),
+                corner=_spl_corners(w, h, max(3, int(SPL_R * S))),
+                f={"title": _make_font(int(25 * S), 600), "sub": _make_font(int(13 * S), 400),
+                   "ver": _make_font(int(12 * S), 400), "phase": _make_font(int(13 * S), 400),
+                   "pct": _make_font(int(13 * S), 600), "tip": _make_font(int(11 * S), 400)})
+    _u.ShowWindow(hwnd, 4)                  # SW_SHOWNOACTIVATE
+    _u.SetTimer(hwnd, 1, SPL_TICK, None)
+    _spl_paint()
+    return True
+
+
+def _spl_proc(hwnd, msg, wparam, lparam):
+    try:
+        if msg == 0x0113:                          # WM_TIMER
+            st = _SPL
+            if st["closing"]:
+                t = (time.time() - st["fade_t"]) / 0.34
+                st["alpha"] = int(255 * max(0.0, 1.0 - t))
+                if t >= 1.0:
+                    _u.KillTimer(hwnd, 1)
+                    _u.DestroyWindow(hwnd)
+                    return 0
+                _spl_paint()
+                return 0
+            gap = st["target"] - st["cur"]
+            if abs(gap) > 0.0015:
+                st["cur"] += gap * 0.16
+            elif gap:
+                st["cur"] = st["target"]
+            _spl_paint()
+            return 0
+        if msg == SPL_WM_PING:
+            _spl_paint()
+            return 0
+        if msg == SPL_WM_BYE:
+            st = _SPL
+            if not st["closing"]:
+                st["cur"] = 1.0
+                st["closing"] = True
+                st["fade_t"] = time.time()
+                _spl_paint()
+            return 0
+        if msg == 0x0002:                          # WM_DESTROY
+            _u.PostQuitMessage(0)
+            return 0
+    except Exception:
+        pass
+    return _u.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
+def _spl_loop() -> None:
+    try:
+        ok = _spl_create()
+    except Exception:
+        log("splash failed: " + traceback.format_exc()[-300:])
+        ok = False
+    _SPL["ready"] = True                       # 起不来也别拖住主流程
+    if not ok:
+        return
+    msg = wintypes.MSG()
+    while _u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        _u.TranslateMessage(ctypes.byref(msg))
+        _u.DispatchMessageW(ctypes.byref(msg))
+    _SPL["hwnd"] = None
+
+
+def splash_boot() -> None:
+    """尽早调用：先把 DPI 感知打开，再起自绘启动窗，最后撤掉静态图。"""
+    if not HAS_SHELL or os.environ.get("CF_PICK_NO_SPLASH") == "1":
+        _pyi_splash_close()
+        return
+    dpi_aware()
+    threading.Thread(target=_spl_loop, name="cfpick-splash", daemon=True).start()
+    for _ in range(80):
+        if _SPL["ready"]:
+            break
+        time.sleep(0.01)
+    _pyi_splash_close()
+
+
+def splash_progress(pct: float, text: str = "", tag: str = "") -> None:
+    """推进度 / 换文案。主线程随时可调，实际重绘在启动窗自己的消息循环里。"""
+    try:
+        _SPL["target"] = max(0.0, min(1.0, float(pct)))
+    except Exception:
+        pass
+    if text:
+        _SPL["text"] = text
+    if tag:
+        _SPL["tag"] = tag
+    hwnd = _SPL["hwnd"]
+    if hwnd and not _SPL["closing"]:
+        _u.PostMessageW(hwnd, SPL_WM_PING, 0, 0)
+
+
+def splash_close() -> None:
+    """淡出并销毁启动窗（主界面已经画好了再叫它）。"""
+    _pyi_splash_close()
+    hwnd = _SPL["hwnd"]
+    if not hwnd or _SPL["closing"]:
+        return
+    _SPL["target"] = 1.0
+    _u.PostMessageW(hwnd, SPL_WM_BYE, 0, 0)
 
 
 def _tray_icon():
@@ -1233,14 +1604,110 @@ def tray_remove() -> None:
         pass
 
 
+_SRV = {"srv": None, "port": None}
+
+
+def release_port() -> None:
+    """把本地服务的监听端口关掉，让「正在退出并释放端口」这句话名副其实。"""
+    srv = _SRV.get("srv")
+    _SRV["srv"] = None
+    if srv is None:
+        return
+    try:
+        srv.shutdown()
+    except Exception:
+        pass
+    try:
+        srv.server_close()
+        log("released 127.0.0.1:%s" % _SRV.get("port"))
+    except Exception:
+        pass
+
+
 def quit_now() -> None:
-    """彻底退出：撤图标 → 结束进程。"""
+    """彻底退出：停测速 → 关服务、释放端口 → 撤图标 → 结束进程。"""
+    try:
+        STATE.stop.set()
+    except Exception:
+        pass
+    release_port()
     tray_remove()
-    threading.Timer(0.2, lambda: os._exit(0)).start()
+    threading.Timer(0.25, lambda: os._exit(0)).start()
 
 
-_ASK = {"result": None}
+def go_tray() -> None:
+    """收进托盘：进程和端口都留着，随时能叫回来。"""
+    ui_minimize()
+    app_hide()
+    tray_balloon("已收进系统托盘。双击图标打开界面，右键可彻底退出。")
+
+
+_ASK = {"result": None, "hot": "", "press": ""}
 ID_MIN, ID_BYE = 201, 202
+
+if HAS_SHELL:
+    class _TRACKMOUSEEVENT(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("hwndTrack", wintypes.HWND), ("dwHoverTime", wintypes.DWORD)]
+
+# 关闭确认框的版式（逻辑 px，运行时按 DPI 缩放）。
+# 和界面同一套配色：深底 + 青色主按钮 + 红色危险按钮，不用系统灰按钮。
+_ASKBOX = {
+    "w": 470, "h": 218,
+    "bye": (24, 152, 116, 38),      # 彻底退出（危险）
+    "min": (152, 152, 158, 38),     # 最小化到托盘（主按钮）
+}
+_ASK_TXT = {
+    "title": "要把测速台留在后台吗？",
+    "b1": "「最小化到托盘」保留后台进程，本地服务继续占用 127.0.0.1:%d；",
+    "b2": "「彻底退出」立即停下测速、关闭服务并释放这个端口。",
+    "bye": "彻底退出",
+    "min": "最小化到托盘",
+    "tip": "按 Esc 或点右上角 × 取消",
+}
+
+
+def _ask_btn_rect(key: str, S: float):
+    x, y, w, h = _ASKBOX[key]
+    return int(x * S), int(y * S), int((x + w) * S), int((y + h) * S)
+
+
+def _ask_hit(x: int, y: int, S: float) -> str:
+    for key in ("bye", "min"):
+        l, t, r, b = _ask_btn_rect(key, S)
+        if l <= x <= r and t <= y <= b:
+            return key
+    return ""
+
+
+def _ask_draw_btn(hdc, key: str, S: float) -> None:
+    """一个圆角按钮：主按钮填青色，危险按钮只描红边（悬停时垫一层暗红）。"""
+    l, t, r, b = _ask_btn_rect(key, S)
+    hot = _ASK["hot"] == key
+    press = _ASK["press"] == key
+    if press:
+        t += max(1, int(1 * S))
+        b += max(1, int(1 * S))
+    rad = int(10 * S)
+    if key == "min":
+        fill = 0x00F0DC46 if hot else 0x00EED322          # 亮青 / 青
+        edge, txt = fill, 0x00140F02                      # 深色字
+    else:
+        fill = 0x00141228 if hot else None                # 暗红（BGR）
+        edge, txt = (0x007171F8, 0x00A5A5FC) if not hot else (0x007171F8, 0x00C4C4FF)
+    br = _g.CreateSolidBrush(fill) if fill is not None else _g.CreateSolidBrush(0x00180E0B)
+    pen = _g.CreatePen(0, max(1, int(S)), edge)
+    try:
+        _g.SelectObject(hdc, br)
+        _g.SelectObject(hdc, pen)
+        _g.RoundRect(hdc, l, t, r, b, rad, rad)
+    finally:
+        _g.DeleteObject(br)
+        _g.DeleteObject(pen)
+    _g.SelectObject(hdc, _SHELL.get("f_ask_btn") or 0)
+    _g.SetTextColor(hdc, txt)
+    rr = wintypes.RECT(l, t, r, b)
+    _u.DrawTextW(hdc, _ASK_TXT[key], -1, ctypes.byref(rr), 0x0001 | 0x0004 | 0x0020)
 
 
 def _ask_paint(hwnd) -> None:
@@ -1254,40 +1721,81 @@ def _ask_paint(hwnd) -> None:
         S = _SHELL.get("scale") or 1.0
 
         _g.SelectObject(hdc, _SHELL.get("f_ask_title") or 0)
-        _g.SetTextColor(hdc, 0x00F4ECE8)
-        r1 = wintypes.RECT(int(22 * S), int(16 * S), rc.right - int(22 * S), int(48 * S))
-        _u.DrawTextW(hdc, "测速台还在后台运行", -1, ctypes.byref(r1), 0x0020 | 0x0004)
+        _g.SetTextColor(hdc, 0x00FBF5F2)                     # RGB(242,245,251)
+        r1 = wintypes.RECT(int(24 * S), int(20 * S), rc.right - int(24 * S), int(50 * S))
+        _u.DrawTextW(hdc, _ASK_TXT["title"], -1, ctypes.byref(r1), 0x0020 | 0x0004)
 
         _g.SelectObject(hdc, _SHELL.get("f_ask_body") or 0)
-        _g.SetTextColor(hdc, 0x00B8A49A)
-        r2 = wintypes.RECT(int(22 * S), int(50 * S), rc.right - int(22 * S), int(108 * S))
-        _u.DrawTextW(hdc, "关掉浏览器标签页不会退出程序。\n"
-                          "是要它留在后台继续待命，还是顺手把进程也结束？",
-                     -1, ctypes.byref(r2), 0x0010)
+        _g.SetTextColor(hdc, 0x00AF998E)                     # RGB(142,153,175)
+        port = _SHELL.get("port") or 0
+        body = (_ASK_TXT["b1"] % port) + "\n" + _ASK_TXT["b2"]
+        r2 = wintypes.RECT(int(24 * S), int(54 * S), rc.right - int(24 * S), int(124 * S))
+        _u.DrawTextW(hdc, body, -1, ctypes.byref(r2), 0x0010)
+
+        _ask_draw_btn(hdc, "bye", S)
+        _ask_draw_btn(hdc, "min", S)
+
+        _g.SelectObject(hdc, _SHELL.get("f_ask_tip") or 0)
+        _g.SetTextColor(hdc, 0x00605A4E)                     # RGB(78,90,96)
+        r3 = wintypes.RECT(int(24 * S), int(196 * S), rc.right - int(24 * S), rc.bottom)
+        _u.DrawTextW(hdc, _ASK_TXT["tip"], -1, ctypes.byref(r3), 0x0020 | 0x0004)
     finally:
         _u.EndPaint(hwnd, ctypes.byref(ps))
 
 
 def _ask_proc(hwnd, msg, wparam, lparam):
     try:
-        if msg == 0x000F:                        # WM_PAINT
+        S = _SHELL.get("scale") or 1.0
+        if msg == 0x000F:                                    # WM_PAINT
             _ask_paint(hwnd)
             return 0
-        if msg == 0x0111:                        # WM_COMMAND
-            cid = wparam & 0xFFFF
-            if cid == ID_MIN:
-                _ASK["result"] = "minimize"
+        if msg == 0x0020:                                    # WM_SETCURSOR
+            pt = wintypes.POINT()
+            if _u.GetCursorPos(ctypes.byref(pt)) and _u.ScreenToClient(hwnd, ctypes.byref(pt)):
+                cid = "hand" if _ask_hit(pt.x, pt.y, S) else "arrow"
+                _u.SetCursor(_u.LoadCursorW(None, 32649 if cid == "hand" else 32512))
+                return 1
+        if msg == 0x0200:                                    # WM_MOUSEMOVE
+            x = ctypes.c_short(lparam & 0xFFFF).value
+            y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+            hot = _ask_hit(x, y, S)
+            if hot != _ASK["hot"]:
+                _ASK["hot"] = hot
+                _u.InvalidateRect(hwnd, None, False)
+            tm = _TRACKMOUSEEVENT(ctypes.sizeof(_TRACKMOUSEEVENT), 0x00000002, hwnd, 0)
+            _u.TrackMouseEvent(ctypes.byref(tm))
+            return 0
+        if msg == 0x02A3:                                    # WM_MOUSELEAVE
+            if _ASK["hot"]:
+                _ASK["hot"] = ""
+                _u.InvalidateRect(hwnd, None, False)
+            return 0
+        if msg == 0x0201:                                    # WM_LBUTTONDOWN
+            x = ctypes.c_short(lparam & 0xFFFF).value
+            y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+            _ASK["press"] = _ask_hit(x, y, S)
+            if _ASK["press"]:
+                _u.InvalidateRect(hwnd, None, False)
+            return 0
+        if msg == 0x0202:                                    # WM_LBUTTONUP
+            x = ctypes.c_short(lparam & 0xFFFF).value
+            y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+            hit = _ask_hit(x, y, S)
+            pressed, _ASK["press"] = _ASK["press"], ""
+            _u.InvalidateRect(hwnd, None, False)
+            if pressed and pressed == hit:
+                _ASK["result"] = "exit" if hit == "bye" else "minimize"
                 _u.DestroyWindow(hwnd)
-                return 0
-            if cid == ID_BYE:
-                _ASK["result"] = "exit"
-                _u.DestroyWindow(hwnd)
-                return 0
-        if msg == 0x0010:                        # WM_CLOSE：点 X 按「留在后台」处理，不杀进程
-            _ASK["result"] = "minimize"
+            return 0
+        if msg == 0x0100 and wparam == 0x1B:                 # WM_KEYDOWN VK_ESCAPE
+            _ASK["result"] = "cancel"
             _u.DestroyWindow(hwnd)
             return 0
-        if msg == 0x0002:                        # WM_DESTROY
+        if msg == 0x0010:                                    # WM_CLOSE：点 × 算取消，窗口留着
+            _ASK["result"] = "cancel"
+            _u.DestroyWindow(hwnd)
+            return 0
+        if msg == 0x0002:                                    # WM_DESTROY
             _u.PostQuitMessage(0)
             return 0
     except Exception:
@@ -1296,10 +1804,10 @@ def _ask_proc(hwnd, msg, wparam, lparam):
 
 
 def ask_exit_mode() -> str:
-    """自绘对话框：最小化到托盘 / 彻底退出。返回 minimize 或 exit。"""
+    """自绘确认框（浏览器模式的兜底路径）。返回 minimize / exit / cancel。"""
     if not HAS_SHELL:
         return "exit"
-    _ASK["result"] = None
+    _ASK.update(result=None, hot="", press="")
     k = ctypes.windll.kernel32
     hinst = k.GetModuleHandleW(None)
     S = _SHELL.get("scale") or _dpi_scale()
@@ -1314,29 +1822,40 @@ def ask_exit_mode() -> str:
     wc.lpszClassName = "CFPickAskWnd"
     _u.RegisterClassW(ctypes.byref(wc))
 
-    w, h = int(430 * S), int(200 * S)
-    sw, sh = _u.GetSystemMetrics(0), _u.GetSystemMetrics(1)
-    hwnd = _u.CreateWindowExW(0x00000008, "CFPickAskWnd", "CF-Pick · 退出",
-                              0x00C80000,   # CAPTION | SYSMENU
-                              int((sw - w) / 2), int((sh - h) / 2), w, h,
-                              None, None, hinst, None)
+    # 传进去的是「客户区」尺寸：带标题栏的窗口要再加一圈边框，否则按钮会被切掉
+    style = 0x00C80000                       # CAPTION | SYSMENU
+    box = wintypes.RECT(0, 0, int(_ASKBOX["w"] * S), int(_ASKBOX["h"] * S))
+    _u.AdjustWindowRectEx(ctypes.byref(box), style, False, 0x00000008)
+    w, h = box.right - box.left, box.bottom - box.top
+
+    wa = wintypes.RECT()
+    if not _u.SystemParametersInfoW(0x0030, 0, ctypes.byref(wa), 0):
+        wa = wintypes.RECT(0, 0, _u.GetSystemMetrics(0), _u.GetSystemMetrics(1))
+    x = wa.left + max(0, ((wa.right - wa.left) - w) // 2)
+    y = wa.top + max(0, ((wa.bottom - wa.top) - h) // 2)
+
+    hwnd = _u.CreateWindowExW(0x00000008, "CFPickAskWnd", "CF-Pick · 关闭确认",
+                              style, x, y, w, h, None, None, hinst, None)
     if not hwnd:
         return "exit"
 
-    _SHELL.setdefault("f_ask_title", _make_font(int(19 * S), 600))
-    _SHELL.setdefault("f_ask_body", _make_font(int(14 * S), 400))
-    f_btn = _make_font(int(14 * S), 400)
+    try:  # 深色标题栏 + 程序图标，和主界面一致
+        for attr in (20, 19):
+            on = ctypes.c_int(1)
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(on), ctypes.sizeof(on)) == 0:
+                break
+        icon = _tray_icon()
+        if icon:
+            _u.SendMessageW(hwnd, 0x0080, 0, icon)
+            _u.SendMessageW(hwnd, 0x0080, 1, icon)
+    except Exception:
+        pass
 
-    def btn(text, x, cw, cid):
-        hs = int(38 * S)
-        bh = _u.CreateWindowExW(0, "BUTTON", text, 0x50000000,
-                                int(x * S), int(122 * S), int(cw * S), hs,
-                                hwnd, ctypes.c_void_p(cid), hinst, None)
-        if bh and f_btn:
-            _u.SendMessageW(bh, 0x0030, f_btn, 1)
-
-    btn("最小化到托盘", 22, 128, ID_MIN)
-    btn("彻底退出", 164, 104, ID_BYE)
+    _SHELL.setdefault("f_ask_title", _make_font(int(17 * S), 600))
+    _SHELL.setdefault("f_ask_body", _make_font(int(13 * S), 400))
+    _SHELL.setdefault("f_ask_btn", _make_font(int(13 * S), 400))
+    _SHELL.setdefault("f_ask_tip", _make_font(int(11 * S), 400))
 
     _u.ShowWindow(hwnd, 5)
     _u.SetForegroundWindow(hwnd)
@@ -1345,7 +1864,7 @@ def ask_exit_mode() -> str:
     while _u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
         _u.TranslateMessage(ctypes.byref(msg))
         _u.DispatchMessageW(ctypes.byref(msg))
-    return _ASK["result"] or "minimize"
+    return _ASK["result"] or "cancel"
 
 
 def _show_window(show: bool = True) -> None:
@@ -1361,19 +1880,18 @@ def _show_window(show: bool = True) -> None:
 
 
 def _on_close(hwnd) -> None:
-    """状态小窗被关：问一下是最小化到托盘还是彻底退出。"""
+    """状态小窗被关：问一下是收进托盘还是彻底退出。"""
     mode = ask_exit_mode()
     if mode == "minimize":
         log("window close -> minimize to tray")
         _show_window(False)
-        if _APP["win"]:
-            app_hide()
-            ui_minimize()
-        tray_balloon("已最小化到系统托盘。双击图标打开界面，右键可彻底退出。")
-    else:
+        go_tray()
+    elif mode == "exit":
         log("window close -> quit")
         _APP["quitting"] = True
         quit_now()
+    else:
+        log("window close -> cancelled")
 
 
 def _tray_popup(hwnd) -> None:
@@ -1565,6 +2083,11 @@ def _build_window(port: int):
         return int(round(v * S))
 
     width, height = sc(480), sc(212)
+    # 客户区尺寸传进去只是内容的大小，标题栏和边框要另加，否则底部按钮会被切
+    st = 0x00CA0000      # WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+    box = wintypes.RECT(0, 0, width, height)
+    u.AdjustWindowRectEx(ctypes.byref(box), st, False, 0)
+    width, height = box.right - box.left, box.bottom - box.top
     sw = u.GetSystemMetrics(0)
     sh = u.GetSystemMetrics(1)
     x = int((sw - width) / 2)
@@ -1572,8 +2095,7 @@ def _build_window(port: int):
 
     hwnd = u.CreateWindowExW(
         0, "CFPickStatusWnd", "CF-Pick · 测速台运行中",
-        0x00CA0000,  # WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
-        x, y, width, height, None, None, hinst, None)
+        st, x, y, width, height, None, None, hinst, None)
     if not hwnd:
         return None
 
@@ -1784,7 +2306,10 @@ def _app_closing():
 
 
 def _app_loaded():
-    splash_close()                     # 页面已经画出来了，撤掉启动图
+    # 主界面已经画出来了：启动窗走完最后一段进度，停半拍再淡出，
+    # 让页面先把第一帧画完，中间不会闪一下空窗口
+    splash_progress(1.0, "准备就绪")
+    threading.Timer(0.30, splash_close).start()
     threading.Thread(target=_dress_app_window, daemon=True).start()
 
 
@@ -1865,6 +2390,7 @@ def embed_start(port: int) -> bool:
         w.events.closing += _app_closing
         w.events.loaded += _app_loaded
         log("embedded window created")
+        splash_progress(0.88, "正在渲染界面…")
         wv.start(debug=False)
     except Exception:
         log("内嵌窗口启动失败 -> 浏览器模式: " + traceback.format_exc()[-800:])
@@ -2021,22 +2547,27 @@ def main():
     t0 = time.time()
     first = is_first_instance()
 
+    splash_boot()                      # 自绘启动窗接手静态图，从这里开始有进度可看
+    splash_progress(0.10, "正在检查运行环境…")
+
     if not first:
-        # 已有实例在跑：等它把端口监听起来，然后把浏览器指过去，自己退出。
-        splash_text("已有一个测速台在运行，正在打开…")
+        # 已有实例在跑：等它把端口监听起来，然后把已有的界面叫回来，自己退出。
+        splash_progress(0.45, "已有一个测速台在运行，正在把界面叫回来…")
         deadline = t0 + 25
         while time.time() < deadline:
             for p in PORTS:
                 if already_running(p):
                     log("second instance -> reuse 127.0.0.1:%d" % p)
-                    splash_close()
                     notify_reopen(p)      # 先让老实例放行界面（它才有 _UI 和托盘）
                     open_ui(p)            # 再把已有窗口提到前台
+                    splash_progress(1.0, "已切回正在运行的测速台")
+                    time.sleep(0.15)
+                    splash_close()
                     return
             time.sleep(0.25)
         log("second instance: 未找到已在运行的实例，改为自行启动")
 
-    splash_text("正在载入界面…")
+    splash_progress(0.28, "正在载入界面…")
     load_ui()
 
     srv = None
@@ -2051,15 +2582,14 @@ def main():
     if srv is None:
         fatal("端口 %d-%d 全部被占用，无法启动。" % (PORTS[0], PORTS[-1]))
         return
+    _SRV.update(srv=srv, port=port)
 
     log("listening on 127.0.0.1:%d  data=%s  启动耗时 %.2fs" % (port, DATA, time.time() - t0))
-    splash_text("正在打开界面…")
-    dpi_aware()
+    splash_progress(0.48, "本地服务已就绪 · 127.0.0.1:%d" % port)
 
     embed = has_webview()
     _APP["embed"] = embed
-    if not embed:
-        splash_close()                 # 内嵌模式等窗口渲染完再关启动图，中间不留空档
+    splash_progress(0.62, "正在准备窗口…" if embed else "正在打开浏览器…")
 
     log("status window + tray: %s" % ("on" if shell_start(port) else "off"))
 
@@ -2075,7 +2605,9 @@ def main():
         _APP["win"] = None
         log("回退到浏览器模式")
         _show_window(True)
+    splash_progress(0.92, "正在打开界面…")
     threading.Timer(0.35, lambda: startup_open(port)).start()
+    threading.Timer(1.4, splash_close).start()
     try:
         threading.Event().wait()                  # 主线程挂住，服务在后台线程跑
     except KeyboardInterrupt:
